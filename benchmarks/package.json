@@ -1,0 +1,8 @@
+{
+  "name": "@box3d/benchmarks",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node run.mjs"
+  }
+}
