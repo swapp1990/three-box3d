@@ -17,6 +17,11 @@
 # native/scripts/build-wasm.sh derives its -s EXPORTED_FUNCTIONS list
 # from this file and also diffs the built .wasm's actual export names
 # against it after compiling.
+#
+# Bridge round 2 (see docs/api-design.md "v0.1 addendum") adds 6 more wrappers
+# (applyForceAt, getBodyType, isBodyAwake, setGravity, setShapeFriction,
+# setShapeRestitution) for a total of 37, on top of the sensor-visitor fix in
+# Bridge_MakeShapeDef (no export-surface change, same 31 -> now 37 exports).
 
 _malloc
 _free
@@ -27,6 +32,7 @@ _b3bridge_add_sensor_box_shape
 _b3bridge_add_sphere_shape
 _b3bridge_apply_impulse
 _b3bridge_applyForce
+_b3bridge_applyForceAt
 _b3bridge_applyTorque
 _b3bridge_cast_ray_closest
 _b3bridge_create_body
@@ -44,6 +50,8 @@ _b3bridge_get_awake_body_count
 _b3bridge_get_body_count
 _b3bridge_get_linear_velocity
 _b3bridge_getAngularVelocity
+_b3bridge_getBodyType
+_b3bridge_isBodyAwake
 _b3bridge_read_transforms
 _b3bridge_set_awake
 _b3bridge_set_body_type
@@ -51,4 +59,7 @@ _b3bridge_set_kinematic_target
 _b3bridge_set_linear_velocity
 _b3bridge_setAngularVelocity
 _b3bridge_setBodyTransform
+_b3bridge_setGravity
+_b3bridge_setShapeFriction
+_b3bridge_setShapeRestitution
 _b3bridge_step

@@ -131,6 +131,16 @@ static b3BodyId Bridge_GetBody( int handle )
 	return g_bodies[handle - 1].id;
 }
 
+static b3ShapeId Bridge_GetShape( int handle )
+{
+	if ( handle <= 0 || handle > B3BRIDGE_MAX_SHAPES || g_shapes[handle - 1].active == false )
+	{
+		return b3_nullShapeId;
+	}
+
+	return g_shapes[handle - 1].id;
+}
+
 static bool Bridge_SameBodyId( b3BodyId a, b3BodyId b )
 {
 	return a.index1 == b.index1 && a.world0 == b.world0 && a.generation == b.generation;
@@ -177,6 +187,14 @@ static b3ShapeDef Bridge_MakeShapeDef( float density, float friction, float rest
 	def.baseMaterial.restitution = restitution;
 	def.enableContactEvents = true;
 	def.enableHitEvents = true;
+	// box3d only emits a sensor begin/end event when the VISITOR shape also has
+	// enableSensorEvents = true (native src/sensor.c:118). This defaults false on
+	// every shape (including non-sensors), so a solid body could never be
+	// detected by a sensor unless every regular shape opts in here. Default this
+	// on for all regular (non-sensor) shapes created through the bridge — this
+	// matches the old app's expectation and box2d v3 behavior, and keeps the
+	// bridge simple (no extra opt-in parameter).
+	def.enableSensorEvents = true;
 	return def;
 }
 
@@ -787,6 +805,17 @@ void b3bridge_applyForce( int bodyHandle, float fx, float fy, float fz )
 	b3Body_ApplyForceToCenter( bodyId, (b3Vec3){ fx, fy, fz }, true );
 }
 
+void b3bridge_applyForceAt( int bodyHandle, float fx, float fy, float fz, float px, float py, float pz )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return;
+	}
+
+	b3Body_ApplyForce( bodyId, (b3Vec3){ fx, fy, fz }, (b3Pos){ px, py, pz }, true );
+}
+
 void b3bridge_applyTorque( int bodyHandle, float tx, float ty, float tz )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
@@ -807,4 +836,59 @@ void b3bridge_setBodyTransform( int bodyHandle, float x, float y, float z, float
 	}
 
 	b3Body_SetTransform( bodyId, (b3Pos){ x, y, z }, (b3Quat){ { qx, qy, qz }, qw } );
+}
+
+int b3bridge_getBodyType( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return -1;
+	}
+
+	return (int)b3Body_GetType( bodyId );
+}
+
+int b3bridge_isBodyAwake( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return 0;
+	}
+
+	return b3Body_IsAwake( bodyId ) ? 1 : 0;
+}
+
+void b3bridge_setGravity( int worldHandle, float x, float y, float z )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return;
+	}
+
+	b3World_SetGravity( worldId, (b3Vec3){ x, y, z } );
+}
+
+void b3bridge_setShapeFriction( int shapeHandle, float friction )
+{
+	b3ShapeId shapeId = Bridge_GetShape( shapeHandle );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return;
+	}
+
+	b3Shape_SetFriction( shapeId, friction );
+}
+
+void b3bridge_setShapeRestitution( int shapeHandle, float restitution )
+{
+	b3ShapeId shapeId = Bridge_GetShape( shapeHandle );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return;
+	}
+
+	b3Shape_SetRestitution( shapeId, restitution );
 }
