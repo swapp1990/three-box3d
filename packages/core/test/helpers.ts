@@ -4,9 +4,14 @@ import { createBox3D, type Box3D } from '../src/index.js';
 
 const WASM_URL = new URL('../wasm/box3d.wasm', import.meta.url);
 
-/** Read the shipped wasm bytes once, reuse across tests that want `wasmBinary`. */
-export async function readWasmBytes(): Promise<Uint8Array> {
-  return readFile(fileURLToPath(WASM_URL));
+/** Read the shipped wasm bytes once, reuse across tests that want `wasmBinary`.
+ *  Returns a Uint8Array over a plain ArrayBuffer (not a Node Buffer / SAB) so
+ *  it satisfies BufferSource for WebAssembly.compile without a cast. */
+export async function readWasmBytes(): Promise<Uint8Array<ArrayBuffer>> {
+  const buf = await readFile(fileURLToPath(WASM_URL));
+  const out = new Uint8Array(buf.byteLength);
+  out.set(buf);
+  return out;
 }
 
 /** Create a fresh Box3D instance for a test (isolated WASM memory each time). */

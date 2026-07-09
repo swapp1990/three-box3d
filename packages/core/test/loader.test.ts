@@ -39,9 +39,7 @@ describe('wasm loader', () => {
     // LinkError. Enumerate the imports from the binary and assert the loader's
     // instantiation succeeded (it did if we got here).
     const bytes = await readWasmBytes();
-    const compiled = await WebAssembly.compile(
-      bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-    );
+    const compiled = await WebAssembly.compile(bytes);
     const imports = WebAssembly.Module.imports(compiled);
     // Sanity: the imports we hard-wire must cover every declared import.
     const supplied = new Set([
