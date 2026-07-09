@@ -57,8 +57,16 @@ mesh.receiveShadow = true;
 scene.add(mesh);
 
 const pickColor = new Color(0xff8a5c);
-const baseColor = new Color(0x6ea8ff);
-for (let i = 0; i < bodies.length; i++) mesh.setColorAt(i, baseColor);
+// A cool blue→teal palette with per-sphere jitter so the grid reads as varied
+// glass beads rather than one flat blue. Each sphere keeps its own base color so
+// a picked sphere fades back to ITS color, not a shared default.
+const baseColors: Color[] = [];
+for (let i = 0; i < bodies.length; i++) {
+  const n = Math.sin(i * 45.233) * 43758.5453;
+  const t = n - Math.floor(n);
+  baseColors.push(new Color().setHSL(0.55 + t * 0.12, 0.55, 0.5 + t * 0.12));
+  mesh.setColorAt(i, baseColors[i]);
+}
 if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
 
 let lastPicked: BodyHandle | null = null;
@@ -108,7 +116,7 @@ function frame(): void {
     const ids = buffer.ids;
     const idx = ids.indexOf(lastPicked);
     if (idx !== -1) {
-      mesh.setColorAt(idx, performance.now() < flashUntil ? pickColor : baseColor);
+      mesh.setColorAt(idx, performance.now() < flashUntil ? pickColor : baseColors[idx]);
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     if (performance.now() >= flashUntil) lastPicked = null;

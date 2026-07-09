@@ -3,44 +3,67 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>three-box3d — vanilla examples</title>
+    <title>three-box3d — examples gallery</title>
+    <meta
+      name="description"
+      content="3D physics for three.js, powered by box3d (Erin Catto). Source-visible vanilla three.js examples."
+    />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./shared/style.css" />
     <style>
+      /* The shared stylesheet pins html/body to the viewport for the canvas
+         pages; the landing page is a normal scrolling document. */
+      html,
       body {
+        height: auto;
         overflow: auto;
       }
     </style>
   </head>
   <body>
-    <div class="gallery">
-      <div class="gallery-header">
-        <h1>three-box3d</h1>
-        <p>
-          3D physics for three.js, powered by <a href="https://github.com/erincatto/box3d" style="color: inherit">box3d</a>
-          (Erin Catto). Plain three.js, zero framework — every page below is a
-          self-contained <code>index.html</code> + <code>main.ts</code> with a
-          "View source" link.
+    <div class="landing">
+      <header class="hero">
+        <div class="hero-badge">🧱 box3d · three.js · WASM</div>
+        <h1 class="hero-title">three-box3d</h1>
+        <p class="hero-tagline">
+          3D physics for three.js, powered by
+          <a href="https://github.com/erincatto/box3d">box3d</a> (Erin Catto).
         </p>
-      </div>
-      <div class="gallery-grid">
+        <p class="hero-sub">
+          The production-hardened three.js &amp; React Three Fiber layer: typed
+          handles, island-aware sleep, InstancedMesh transform sync, and a
+          fixed-timestep runtime — proven on a live deployed app. Every page below
+          is a self-contained <code>index.html</code> + <code>main.ts</code> with a
+          <strong>View source</strong> link.
+        </p>
+        <pre class="hero-code"><span class="c-kw">import</span> { createBox3D, FixedStepper, TransformBuffer } <span class="c-kw">from</span> <span class="c-str">'box3d-web'</span>;
+<span class="c-kw">import</span> { writeTransformsToInstancedMesh } <span class="c-kw">from</span> <span class="c-str">'three-box3d'</span>;
+
+<span class="c-kw">const</span> b3 = <span class="c-kw">await</span> createBox3D();          <span class="c-com">// loud, explicit init</span>
+<span class="c-kw">const</span> world = b3.createWorld({ gravity: [<span class="c-num">0</span>, -<span class="c-num">9.81</span>, <span class="c-num">0</span>] });</pre>
+      </header>
+
+      <main class="gallery-grid" aria-label="Examples">
         <a class="card" href="./stack/index.html">
+          <div class="card-glyph" aria-hidden="true">🧱</div>
           <h2>Brick Stack</h2>
           <p>
-            A settled 8×6 brick wall you can click-impulse. FixedStepper,
-            TransformBuffer, SleepManager (island-aware sleep), InstancedMesh sync.
+            A settled 8×6 masonry wall you can click-impulse apart. Island-aware
+            sleep keeps the idle wall at ~0 step cost until you hit it.
           </p>
           <span class="tag">radialImpulse · SleepManager</span>
         </a>
         <a class="card" href="./ball-drop/index.html">
+          <div class="card-glyph" aria-hidden="true">⚪</div>
           <h2>Ball Drop</h2>
           <p>
-            Spheres rain onto a floor forever, capped by a BodyPool that evicts the
-            oldest ball once the pool is full.
+            Colored spheres rain onto the floor forever, capped by a BodyPool that
+            evicts the oldest ball once the pool is full.
           </p>
           <span class="tag">BodyPool</span>
         </a>
         <a class="card" href="./raycast-pick/index.html">
+          <div class="card-glyph" aria-hidden="true">🎯</div>
           <h2>Raycast Pick</h2>
           <p>
             Click to pick a body straight from the physics world via
@@ -49,6 +72,7 @@
           <span class="tag">raycastFromCamera</span>
         </a>
         <a class="card" href="./contact-pulse/index.html">
+          <div class="card-glyph" aria-hidden="true">✦</div>
           <h2>Contact Pulse</h2>
           <p>
             Tumbling cubes flash on impact — contact-begin events drive a
@@ -56,12 +80,17 @@
           </p>
           <span class="tag">drainContactBeginEvents · setColorAt</span>
         </a>
-      </div>
-      <div class="gallery-footer">
+      </main>
+
+      <footer class="landing-footer">
         <a href="https://github.com/swapp1990/three-box3d" target="_blank" rel="noopener noreferrer">
           github.com/swapp1990/three-box3d
         </a>
-      </div>
+        <span class="dot">·</span>
+        <span>MIT</span>
+        <span class="dot">·</span>
+        <span>wraps box3d@v0.1.0, built with Emscripten 6.0.2</span>
+      </footer>
     </div>
   </body>
 </html>

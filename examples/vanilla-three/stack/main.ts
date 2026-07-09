@@ -88,11 +88,22 @@ mesh.receiveShadow = true;
 mesh.boundingSphere = new Sphere(new Vector3(0, 2, 0), 12);
 scene.add(mesh);
 
+// Warm terracotta bricks with per-brick jitter, plus the occasional cool-slate
+// or gold accent course so the wall reads as varied masonry, not one flat tone.
+// (All via setColorAt / instanceColor — vertexColors stays false, see above.)
 const brickColor = new Color();
 for (let i = 0; i < bricks.length; i++) {
   const jitter = Math.sin(i * 12.9898) * 43758.5453;
   const t = jitter - Math.floor(jitter);
-  brickColor.setHSL(0.06 + t * 0.02, 0.35, 0.42 + t * 0.12);
+  const accent = Math.sin(i * 78.233) * 43758.5453;
+  const a = accent - Math.floor(accent);
+  if (a > 0.9) {
+    brickColor.setHSL(0.11, 0.62, 0.46 + t * 0.08); // gold accent brick
+  } else if (a > 0.8) {
+    brickColor.setHSL(0.6, 0.22, 0.36 + t * 0.08); // cool slate brick
+  } else {
+    brickColor.setHSL(0.045 + t * 0.03, 0.55, 0.36 + t * 0.12); // terracotta
+  }
   mesh.setColorAt(i, brickColor);
 }
 if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

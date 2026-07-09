@@ -308,11 +308,55 @@ function Bricks({
 
 // ---- scene dressing ----
 
+// Mottled-asphalt ground texture — matches the vanilla gallery's ground so the
+// r3f playground reads as part of the same night scene.
+function makeGroundTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#0e1015';
+    ctx.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 12; i += 1) {
+      const bx = Math.random() * 256;
+      const by = Math.random() * 256;
+      const br = 26 + Math.random() * 44;
+      const light = Math.random() < 0.45;
+      const grad = ctx.createRadialGradient(bx, by, 2, bx, by, br);
+      grad.addColorStop(0, light ? 'rgba(150, 165, 200, 0.06)' : 'rgba(0, 0, 0, 0.32)');
+      grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(bx - br, by - br, br * 2, br * 2);
+    }
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.lineWidth = 3;
+    for (let p = 0; p <= 256; p += 64) {
+      ctx.beginPath();
+      ctx.moveTo(p, 0);
+      ctx.lineTo(p, 256);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, p);
+      ctx.lineTo(256, p);
+      ctx.stroke();
+    }
+  }
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(7, 7);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 function Ground() {
+  const texture = useMemo(() => makeGroundTexture(), []);
+  useEffect(() => () => texture.dispose(), [texture]);
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[80, 80]} />
-      <meshStandardMaterial color="#171b28" roughness={0.98} metalness={0} />
+      <meshStandardMaterial map={texture} color="#9aa2b2" roughness={0.97} metalness={0.02} />
     </mesh>
   );
 }
