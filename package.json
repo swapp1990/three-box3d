@@ -10,5 +10,10 @@
   },
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "scripts": {
+    "build": "npm run build -w box3d-web",
+    "test": "npm run test -w box3d-web",
+    "typecheck": "npm run typecheck -w box3d-web"
+  }
 }

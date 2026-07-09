@@ -4,7 +4,35 @@
   "description": "Core WASM build + idiomatic typed TypeScript API for box3d — 3D physics for the web, powered by box3d (Erin Catto).",
   "license": "MIT",
   "private": false,
-  "main": "index.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./helpers": {
+      "types": "./dist/helpers/index.d.ts",
+      "import": "./dist/helpers/index.js"
+    },
+    "./wasm/box3d.wasm": "./wasm/box3d.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "wasm",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "sync-wasm": "node scripts/sync-wasm.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/swapp1990/three-box3d",
@@ -14,9 +42,17 @@
     "box3d",
     "physics",
     "wasm",
-    "webassembly"
+    "webassembly",
+    "3d",
+    "game-physics"
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
