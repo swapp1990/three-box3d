@@ -1,0 +1,54 @@
+# Expected WASM export list for native/dist/box3d.wasm
+#
+# Ground truth = every `b3bridge_*` function defined in native/bridge.c
+# (verified by grep, not by trusting old build logs or docs — the old
+# repo's saved build logs/settings listed only 19 EXPORTED_FUNCTIONS
+# while the actual shipped WASM exported 25 b3bridge_* functions
+# (confirmed here by instantiating the old repo's box3d.wasm directly
+# in Node and reading instance.exports — not by trusting secondhand
+# counts). This repo's bridge.c adds 6 new wrappers (destroyJoint,
+# setAngularVelocity, getAngularVelocity, applyForce, applyTorque,
+# setBodyTransform) for a total of 31. This file exists so future
+# export-count drift is caught automatically instead of silently
+# shipping a stale list again.
+#
+# Format: one Emscripten EXPORTED_FUNCTIONS name per line (with leading
+# underscore), blank lines and lines starting with # are ignored.
+# native/scripts/build-wasm.sh derives its -s EXPORTED_FUNCTIONS list
+# from this file and also diffs the built .wasm's actual export names
+# against it after compiling.
+
+_malloc
+_free
+
+_b3bridge_add_box_shape
+_b3bridge_add_capsule_shape
+_b3bridge_add_sensor_box_shape
+_b3bridge_add_sphere_shape
+_b3bridge_apply_impulse
+_b3bridge_applyForce
+_b3bridge_applyTorque
+_b3bridge_cast_ray_closest
+_b3bridge_create_body
+_b3bridge_create_distance_joint_ex
+_b3bridge_create_revolute_joint
+_b3bridge_create_spherical_joint
+_b3bridge_create_world
+_b3bridge_destroy_body
+_b3bridge_destroy_world
+_b3bridge_destroyJoint
+_b3bridge_drain_contact_begin_events
+_b3bridge_drain_sensor_events
+_b3bridge_explode
+_b3bridge_get_awake_body_count
+_b3bridge_get_body_count
+_b3bridge_get_linear_velocity
+_b3bridge_getAngularVelocity
+_b3bridge_read_transforms
+_b3bridge_set_awake
+_b3bridge_set_body_type
+_b3bridge_set_kinematic_target
+_b3bridge_set_linear_velocity
+_b3bridge_setAngularVelocity
+_b3bridge_setBodyTransform
+_b3bridge_step

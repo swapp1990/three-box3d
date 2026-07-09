@@ -1,0 +1,41 @@
+Upstream: https://github.com/erincatto/box3d
+Tag:      v0.1.0
+Commit:   8441b4a06d6d09dcfb0b0f704df4d847d1437b92
+Author date of pinned commit: 2026-06-30 10:57:46 -0700
+Pinned:   2026-07-09
+
+Notes:
+- v0.1.0 is the latest upstream release tag at pin time (checked via
+  `git ls-remote --tags`). It resolves to the same commit as the tag ref.
+- The previously vendored source in the old repo
+  (3d-car-assembler/vendor/box3d-experiment/box3d-main.zip) was an
+  unpinned `main`-branch snapshot with no recorded commit. This pin
+  replaces that with an exact, reproducible commit.
+- All box3d C API symbols used by native/bridge.c were checked against
+  this pinned commit's include/box3d/*.h and are unchanged: b3CreateWorld,
+  b3DestroyWorld, b3World_Step, b3CreateBody, b3DestroyBody, b3MakeBoxHull,
+  b3CreateHullShape, b3CreateSphereShape, b3CreateCapsuleShape,
+  b3Body_ApplyLinearImpulse, b3Body_SetLinearVelocity,
+  b3Body_SetTargetTransform, b3CreateSphericalJoint, b3CreateRevoluteJoint,
+  b3CreateDistanceJoint, b3World_Explode, b3World_CastRayClosest,
+  b3Body_SetType, b3Body_GetLinearVelocity, b3Body_SetAwake,
+  b3World_GetAwakeBodyCount, b3World_GetCounters, b3Body_GetPosition,
+  b3Body_GetRotation, b3World_GetContactEvents, b3World_GetSensorEvents,
+  plus the new-wrapper symbols b3DestroyJoint, b3Body_SetAngularVelocity,
+  b3Body_GetAngularVelocity, b3Body_ApplyForce, b3Body_ApplyTorque,
+  b3Body_SetTransform. No structural drift found; no bridge.c fixes
+  were required for this pin.
+- `b3CreateWorld` is `#define`d to `b3CreateWorldDoublePrecision` only
+  when `BOX3D_DOUBLE_PRECISION` is defined at compile time. We do not
+  define it, so the single-precision `b3CreateWorld` symbol is used,
+  matching the existing (pre-extraction) app build.
+
+License: MIT, Copyright (c) 2026 Erin Catto. See THIRD_PARTY_NOTICES.md
+at the repo root for full text and third-party notices for excluded
+sample-only dependencies (extern/sokol, samples/jsmn.h,
+samples/tiny_obj_loader.h).
+
+Reproduce this pin:
+  native/scripts/fetch-box3d.sh
+(clones native/box3d/ at this exact commit; the directory is gitignored
+and fetched fresh by the build script, not committed.)
