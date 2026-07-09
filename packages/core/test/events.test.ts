@@ -90,23 +90,40 @@ describe('event draining contract', () => {
     world.destroy();
   });
 
-  // NOTE ON SENSOR EVENTS: box3d only emits a sensor-begin event when the
-  // VISITOR shape also has `enableSensorEvents = true` (native src/sensor.c:118
-  // — `if (otherShape->enableSensorEvents == false) ...skip`). The frozen Phase 0
-  // bridge (native/bridge.c, `Bridge_MakeShapeDef`) does NOT set that flag on
-  // solid box/sphere/capsule shapes, so a dynamic body falling through a sensor
-  // never generates an event through the current export surface. These tests
-  // therefore verify the sensor drain PLUMBING (queue drain + drainInto parity)
-  // rather than a real overlap. Enabling real sensor visitors is a bridge change,
-  // deferred to a future recompile.
+  // SENSOR EVENTS: box3d only emits a sensor-begin event when the VISITOR shape
+  // also has `enableSensorEvents = true` (native src/sensor.c:118 —
+  // `if (otherShape->enableSensorEvents == false) ...skip`). Bridge round 2's
+  // `Bridge_MakeShapeDef` now defaults `enableSensorEvents = true` on every
+  // regular (non-sensor) shape, so a solid dynamic body falling through a
+  // sensor box generates a real begin-touch event through the bridge.
+  it('a solid body falling through a sensor generates a sensor-begin event', () => {
+    const world = b3.createWorld({ gravity: [0, -20, 0] });
+    const sensorBody = world.createBody({ type: 'static', position: [0, 0.5, 0] });
+    const sensorShape = world.addSensorBox(sensorBody, [1, 1, 1]);
+    const faller = world.createBody({ type: 'dynamic', position: [0, 4, 0] });
+    world.addSphere(faller, 0.3, { density: 2 });
+
+    let events: ReturnType<typeof world.drainSensorEvents> = [];
+    for (let i = 0; i < 120 && events.length === 0; i++) {
+      world.step(1 / 60, 4);
+      events = world.drainSensorEvents();
+    }
+
+    expect(events.length).toBeGreaterThan(0);
+    expect(events[0].sensor).toBe(sensorBody);
+    expect(events[0].other).toBe(faller);
+    void sensorShape;
+    world.destroy();
+  });
+
   it('sensor drain returns an empty array when nothing accumulated', () => {
     const world = b3.createWorld({ gravity: [0, -20, 0] });
     const sensorBody = world.createBody({ type: 'static', position: [0, 0.5, 0] });
     world.addSensorBox(sensorBody, [1, 1, 1]);
-    const faller = world.createBody({ type: 'dynamic', position: [0, 4, 0] });
+    // Far away — never overlaps the sensor, so the queue should stay empty.
+    const faller = world.createBody({ type: 'dynamic', position: [500, 4, 0] });
     world.addSphere(faller, 0.3, { density: 2 });
     for (let i = 0; i < 60; i++) world.step(1 / 60, 4);
-    // No visitor sensor opt-in on the bridge → no events; drain is well-behaved.
     expect(world.drainSensorEvents()).toEqual([]);
     world.destroy();
   });

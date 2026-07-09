@@ -671,3 +671,35 @@ Deferred to **v1.0**:
 Out of the **core** package entirely (belongs to sibling packages, never in `box3d-web`):
 - Any `three` import, `Object3D`/`InstancedMesh` sync → `three-box3d`.
 - React hooks, `<Physics>` provider → `r3f-box3d`.
+
+## 6. v0.1 addendum (bridge round 2)
+
+Additive-only surface added after the frozen sign-off above. Existing signatures
+were not changed; all new methods degrade gracefully via `Capabilities` on older
+builds. Ground truth is `native/expected-exports.txt` (37 `b3bridge_*` + malloc/free).
+
+- **Sensor-visitor fix (no new export).** `Bridge_MakeShapeDef` now sets
+  `enableSensorEvents = true` on every regular (non-sensor) shape. box3d only
+  emits a sensor begin/end event when the *visitor* shape has that flag set
+  (`native/box3d/src/sensor.c:118`); previously no solid box/sphere/capsule shape
+  could ever be detected by a sensor. Default-on (no bridge param) matches the
+  old app's expectation and box2d v3 behavior.
+- **`World.applyForce(body, force, at?)` — `at` now honored.** New export
+  `b3bridge_applyForceAt` wraps `b3Body_ApplyForce` (world-space application
+  point; imparts torque when off-center). Gated by `Capabilities.forceAtPoint`;
+  without it (or when `at` is omitted) the existing center-of-mass
+  `b3bridge_applyForce` path is used, unchanged.
+- **`World.getBodyType(body)` / `World.isBodyAwake(body)`.** Wrap
+  `b3Body_GetType` / `b3Body_IsAwake`. Gated by `Capabilities.bodyQueries`.
+  `getBodyType` returns `null` for an invalid handle or an older build.
+- **`World.setGravity([x, y, z])`.** Wraps `b3World_SetGravity` (full vector),
+  superseding the Y-only gravity accepted by `createWorld()`. Gated by
+  `Capabilities.setGravity`.
+- **`World.setShapeFriction(shape, friction)` / `World.setShapeRestitution(shape, restitution)`.**
+  Wrap `b3Shape_SetFriction` / `b3Shape_SetRestitution`, addressed by the
+  `ShapeHandle` already returned from `add*Shape`. Gated by
+  `Capabilities.shapeMaterial`. This is the "runtime material updates" item
+  from the v0.5 defer list in §5 — pulled forward because the upstream API is a
+  trivial 1:1 wrapper.
+- **New `Capabilities` fields (add-only):** `forceAtPoint`, `bodyQueries`,
+  `setGravity`, `shapeMaterial`.

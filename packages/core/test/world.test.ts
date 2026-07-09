@@ -38,6 +38,36 @@ describe('World lifecycle & bodies', () => {
     world.destroy();
   });
 
+  it('setShapeFriction / setShapeRestitution do not throw on a valid shape (bridge round 2)', () => {
+    const world = b3.createWorld();
+    const body = world.createBody({ type: 'dynamic' });
+    const shape = world.addBox(body, [0.5, 0.5, 0.5], { friction: 0.6, restitution: 0 });
+    expect(() => world.setShapeFriction(shape, 0.1)).not.toThrow();
+    expect(() => world.setShapeRestitution(shape, 0.9)).not.toThrow();
+    world.destroy();
+  });
+
+  it('setShapeRestitution measurably changes bounce behavior', () => {
+    const bouncy = b3.createWorld({ gravity: [0, -20, 0] });
+    const ground = bouncy.createBody({ type: 'static', position: [0, -0.5, 0] });
+    bouncy.addBox(ground, [10, 0.5, 10], { friction: 0.5, restitution: 0 });
+    const ball = bouncy.createBody({ type: 'dynamic', position: [0, 3, 0] });
+    const shape = bouncy.addSphere(ball, 0.5, { density: 1, restitution: 0.05 });
+    bouncy.setShapeRestitution(shape, 0.95);
+    let maxUpwardVelocityAfterFirstBounce = -Infinity;
+    let touchedGround = false;
+    for (let i = 0; i < 180; i++) {
+      bouncy.step(1 / 60, 4);
+      const v = bouncy.getLinearVelocity(ball);
+      if (v.y < -0.5) touchedGround = true;
+      if (touchedGround && v.y > maxUpwardVelocityAfterFirstBounce) {
+        maxUpwardVelocityAfterFirstBounce = v.y;
+      }
+    }
+    expect(maxUpwardVelocityAfterFirstBounce).toBeGreaterThan(1);
+    bouncy.destroy();
+  });
+
   it('gravity pulls a dynamic body down', () => {
     const { world, ball } = buildDropScene(b3);
     const ids = new Int32Array([ball]);
@@ -47,6 +77,19 @@ describe('World lifecycle & bodies', () => {
     for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
     world.readTransforms(ids, out);
     expect(out[1]).toBeLessThan(startY);
+    world.destroy();
+  });
+
+  it('setGravity (full vector) changes the direction bodies fall (bridge round 2)', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const body = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addSphere(body, 0.5, { density: 1 });
+    world.setGravity([20, 0, 0]);
+    for (let i = 0; i < 10; i++) world.step(1 / 60, 4);
+    const out = new Float32Array(7);
+    world.readTransforms(new Int32Array([body]), out);
+    expect(out[0]).toBeGreaterThan(0); // pulled along +X, not -Y
+    expect(out[1]).toBeCloseTo(0, 3);
     world.destroy();
   });
 
@@ -72,6 +115,35 @@ describe('World lifecycle & bodies', () => {
     for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
     world.readTransforms(new Int32Array([ball]), out);
     expect(out[1]).toBeCloseTo(y0, 3); // static → does not fall
+    world.destroy();
+  });
+
+  it('getBodyType reports the current type and tracks setBodyType', () => {
+    const world = b3.createWorld();
+    const body = world.createBody({ type: 'dynamic' });
+    world.addBox(body, [0.5, 0.5, 0.5]);
+    expect(world.getBodyType(body)).toBe('dynamic');
+    world.setBodyType(body, 'static');
+    expect(world.getBodyType(body)).toBe('static');
+    world.setBodyType(body, 'kinematic');
+    expect(world.getBodyType(body)).toBe('kinematic');
+    world.destroy();
+  });
+
+  it('getBodyType returns null for an invalid handle', () => {
+    const world = b3.createWorld();
+    expect(world.getBodyType(999999 as unknown as ReturnType<World['createBody']>)).toBeNull();
+    world.destroy();
+  });
+
+  it('isBodyAwake tracks sleep/wake transitions', () => {
+    const { world, ball } = buildDropScene(b3);
+    expect(world.isBodyAwake(ball)).toBe(true);
+    world.sleepBody(ball);
+    world.step(1 / 60, 4);
+    expect(world.isBodyAwake(ball)).toBe(false);
+    world.wakeBody(ball);
+    expect(world.isBodyAwake(ball)).toBe(true);
     world.destroy();
   });
 });
@@ -122,6 +194,19 @@ describe('velocities, forces, impulses, kinematics', () => {
     world.step(1 / 60, 4);
     const v = world.getLinearVelocity(body);
     expect(v.x).toBeGreaterThan(0);
+    world.destroy();
+  });
+
+  it('applyForce at an off-center world point imparts torque (bridge round 2)', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const body = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addBox(body, [0.5, 0.5, 0.5], { density: 1 });
+    // Force along +Z applied at a point offset on +X from the center of mass
+    // generates torque about Y — angular velocity should pick up.
+    world.applyForce(body, [0, 0, 50], [0.5, 0, 0]);
+    world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(body);
+    expect(Math.abs(w.y)).toBeGreaterThan(0);
     world.destroy();
   });
 
@@ -232,6 +317,12 @@ describe('sleep control & capabilities', () => {
     expect(caps.angularVelocity).toBe(true);
     expect(caps.has('explode')).toBe(true);
     expect(caps.has('nonexistent-feature')).toBe(false);
+    // Bridge round 2 additions — all present in this build.
+    expect(caps.forceAtPoint).toBe(true);
+    expect(caps.bodyQueries).toBe(true);
+    expect(caps.setGravity).toBe(true);
+    expect(caps.shapeMaterial).toBe(true);
+    expect(caps.has('shapeMaterial')).toBe(true);
     world.destroy();
   });
 
