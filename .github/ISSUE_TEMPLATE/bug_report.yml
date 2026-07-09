@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible issue in one of the three-box3d packages.
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a bug. Please include a minimal reproduction whenever possible.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the observed behavior and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Link a minimal reproduction, StackBlitz, repository, or paste the smallest code sample that reproduces it.
+    validations:
+      required: true
+  - type: input
+    id: package-version
+    attributes:
+      label: three-box3d version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: peer-versions
+    attributes:
+      label: three / @react-three/fiber versions
+      placeholder: three 0.185.1, @react-three/fiber 9.6.1
+  - type: dropdown
+    id: package
+    attributes:
+      label: Which package
+      options:
+        - box3d-web
+        - three-box3d
+        - r3f-box3d
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser, bundler, OS, Node version, and any relevant runtime details.
+  - type: checkboxes
+    id: existing-issues
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched existing issues and did not find this already reported.
+          required: true

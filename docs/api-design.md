@@ -594,7 +594,7 @@ function frame(delta: number) {
   if (stepped) {
     buffer.rebuild();
     buffer.readInto(world);                     // one bulk read: 7 floats/body
-    writeTransformsToInstancedMesh(mesh, buffer.ids, buffer.transforms); // adapter does the matrix write
+    writeTransformsToInstancedMesh(mesh, buffer); // adapter does the matrix write (takes the whole buffer)
   }
 }
 // drive frame(delta) from your rAF / R3F useFrame loop — never setState per frame.

@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an API, helper, or adapter improvement.
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting an improvement. Please describe the use case first so the API shape can stay minimal.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / use case
+      description: What are you trying to build, and what is difficult or missing today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed API or solution
+      description: Sketch the smallest API or behavior change that would solve the problem.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note workarounds, existing APIs, or different designs you considered.
+  - type: checkboxes
+    id: native-surface
+    attributes:
+      label: Native surface changes
+      options:
+        - label: I understand box3d is pre-1.0 and native-surface changes require a WASM recompile.
+          required: true

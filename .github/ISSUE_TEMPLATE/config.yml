@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: box3d engine (upstream) bugs
+    url: https://github.com/erincatto/box3d/issues
+    about: Report native box3d engine bugs in the upstream repository.
+  - name: Pull requests welcome
+    url: https://github.com/swapp1990/three-box3d/blob/main/CONTRIBUTING.md
+    about: PRs are welcome. Please read CONTRIBUTING.md before opening one.
