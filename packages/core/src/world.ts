@@ -16,6 +16,7 @@
 import type { Box3DModule, Ptr } from './raw-module.js';
 import {
   BODY_TYPE_TO_INT,
+  INT_TO_BODY_TYPE,
   type BodyHandle,
   type BodyOptions,
   type BodyType,
@@ -103,6 +104,14 @@ export class WorldImpl {
     this.pullEvents();
   }
 
+  /** Set the full gravity vector (x,y,z), superseding the Y-only gravity given
+   *  at `createWorld()` time. Bridge round 2. */
+  setGravity(gravity: Vec3): void {
+    this.assertLive();
+    const [x, y, z] = gravity;
+    this.mod.exports.b3bridge_setGravity(this.handle, finiteOr(x, 0), finiteOr(y, -9.81), finiteOr(z, 0));
+  }
+
   /** Read the step's begin events out of the bridge into the JS queues. */
   private pullEvents(): void {
     // Contact begin events: [bodyA, bodyB, approachSpeed] per tuple.
@@ -171,6 +180,21 @@ export class WorldImpl {
   setBodyType(body: BodyHandle, type: BodyType): void {
     this.assertLive();
     this.mod.exports.b3bridge_set_body_type(body, BODY_TYPE_TO_INT[type] ?? BODY_TYPE_TO_INT.dynamic);
+  }
+
+  /** Returns the body's current type, or `null` for an invalid handle or an
+   *  older WASM build that predates this export (bridge round 2). */
+  getBodyType(body: BodyHandle): BodyType | null {
+    this.assertLive();
+    const raw = this.mod.exports.b3bridge_getBodyType(body);
+    if (raw < 0) return null;
+    return INT_TO_BODY_TYPE[raw] ?? null;
+  }
+
+  /** Returns whether the body is currently awake (bridge round 2). */
+  isBodyAwake(body: BodyHandle): boolean {
+    this.assertLive();
+    return this.mod.exports.b3bridge_isBodyAwake(body) !== 0;
   }
 
   setBodyTransform(body: BodyHandle, position: Vec3, rotation: Quat): void {
@@ -245,6 +269,18 @@ export class WorldImpl {
       finiteOr(hy, 0.5),
       finiteOr(hz, 0.5),
     ) as ShapeHandle;
+  }
+
+  /** Update a shape's friction after creation (bridge round 2). */
+  setShapeFriction(shape: ShapeHandle, friction: number): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_setShapeFriction(shape, finiteOr(friction, 0.6));
+  }
+
+  /** Update a shape's restitution after creation (bridge round 2). */
+  setShapeRestitution(shape: ShapeHandle, restitution: number): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_setShapeRestitution(shape, finiteOr(restitution, 0));
   }
 
   // --- velocities / forces / impulses / kinematics ---
@@ -328,10 +364,25 @@ export class WorldImpl {
     );
   }
 
-  applyForce(body: BodyHandle, force: Vec3, _at?: Vec3): void {
+  applyForce(body: BodyHandle, force: Vec3, at?: Vec3): void {
     this.assertLive();
-    // The bridge applies force at the center of mass (b3Body_ApplyForceToCenter);
-    // the optional `at` point has no bridge export and is accepted-but-ignored.
+    // If a world-space application point is given AND this build exports the
+    // at-point wrapper (bridge round 2), apply there (may impart torque). Older
+    // builds without `b3bridge_applyForceAt` fall back to center-of-mass and
+    // silently ignore `at` (documented pre-round-2 behavior).
+    if (at && typeof this.mod.exports.b3bridge_applyForceAt === 'function') {
+      const [px, py, pz] = at;
+      this.mod.exports.b3bridge_applyForceAt(
+        body,
+        finiteOr(force[0], 0),
+        finiteOr(force[1], 0),
+        finiteOr(force[2], 0),
+        finiteOr(px, 0),
+        finiteOr(py, 0),
+        finiteOr(pz, 0),
+      );
+      return;
+    }
     this.mod.exports.b3bridge_applyForce(
       body,
       finiteOr(force[0], 0),

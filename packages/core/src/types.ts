@@ -106,6 +106,15 @@ export interface Capabilities {
   angularVelocity: boolean;
   forces: boolean;
   setBodyTransform: boolean;
+  /** applyForce/applyImpulse honoring a world-space application point (not just
+   *  center-of-mass) — bridge round 2. */
+  forceAtPoint: boolean;
+  /** getBodyType / isBodyAwake queries — bridge round 2. */
+  bodyQueries: boolean;
+  /** World.setGravity (full x,y,z vector) — bridge round 2. */
+  setGravity: boolean;
+  /** Per-shape setFriction/setRestitution — bridge round 2. */
+  shapeMaterial: boolean;
   /** Open-ended probe for features added after these typings were published. */
   has(feature: string): boolean;
 }
@@ -114,4 +123,10 @@ export const BODY_TYPE_TO_INT: Record<BodyType, number> = {
   static: 0,
   kinematic: 1,
   dynamic: 2,
+};
+
+export const INT_TO_BODY_TYPE: Record<number, BodyType> = {
+  0: 'static',
+  1: 'kinematic',
+  2: 'dynamic',
 };

@@ -53,19 +53,27 @@ export function computeCapabilities(mod: Box3DModule, world: WorldImpl): Capabil
   const awakeBodyCount = probe(() => exp.b3bridge_get_awake_body_count(handle));
   const bodyCount = probe(() => exp.b3bridge_get_body_count(handle));
 
+  const setGravity = probe(() => {
+    const g = exp.b3bridge_setGravity(handle, 0, -9.81, 0);
+    void g;
+  });
+
   // Body-level probes need a real throwaway body far below the play area.
   let setBodyType = false;
   let getLinearVelocity = false;
   let angularVelocity = false;
   let forces = false;
+  let forceAtPoint = false;
   let setAwake = false;
   let setBodyTransform = false;
+  let bodyQueries = false;
+  let shapeMaterial = false;
 
   let probeBody = 0;
   try {
     probeBody = exp.b3bridge_create_body(handle, 2, 0, -8800, 0, 0, 0, 0, 1, 0);
     if (probeBody) {
-      exp.b3bridge_add_sphere_shape(probeBody, 0.1, 1, 0.6, 0);
+      const probeShape = exp.b3bridge_add_sphere_shape(probeBody, 0.1, 1, 0.6, 0);
       setBodyType = probe(() => exp.b3bridge_set_body_type(probeBody, 2));
       getLinearVelocity = probe(() => {
         const ptr = mod.malloc(3 * 4);
@@ -88,10 +96,19 @@ export function computeCapabilities(mod: Box3DModule, world: WorldImpl): Capabil
         exp.b3bridge_applyForce(probeBody, 0, 0, 0);
         exp.b3bridge_applyTorque(probeBody, 0, 0, 0);
       });
+      forceAtPoint = probe(() => exp.b3bridge_applyForceAt(probeBody, 0, 0, 0, 0, -8800, 0));
       setAwake = probe(() => exp.b3bridge_set_awake(probeBody, 0));
       setBodyTransform = probe(() =>
         exp.b3bridge_setBodyTransform(probeBody, 0, -8800, 0, 0, 0, 0, 1),
       );
+      bodyQueries = probe(() => {
+        exp.b3bridge_getBodyType(probeBody);
+        exp.b3bridge_isBodyAwake(probeBody);
+      });
+      shapeMaterial = probe(() => {
+        exp.b3bridge_setShapeFriction(probeShape, 0.6);
+        exp.b3bridge_setShapeRestitution(probeShape, 0);
+      });
     }
   } finally {
     if (probeBody) exp.b3bridge_destroy_body(probeBody as BodyHandle);
@@ -108,6 +125,10 @@ export function computeCapabilities(mod: Box3DModule, world: WorldImpl): Capabil
     angularVelocity,
     forces,
     setBodyTransform,
+    forceAtPoint,
+    bodyQueries,
+    setGravity,
+    shapeMaterial,
   });
   cache.set(world, caps);
   return caps;

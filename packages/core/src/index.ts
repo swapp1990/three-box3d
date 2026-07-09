@@ -56,10 +56,17 @@ export interface World {
   readonly handle: WorldHandle;
 
   step(dt: number, substeps?: number): void;
+  /** Set the full gravity vector (x,y,z). Bridge round 2 — see `Capabilities.setGravity`. */
+  setGravity(gravity: Vec3): void;
 
   createBody(options?: BodyOptions): BodyHandle;
   destroyBody(body: BodyHandle): void;
   setBodyType(body: BodyHandle, type: BodyType): void;
+  /** Bridge round 2. Returns `null` for an invalid handle or an older build
+   *  without this export — see `Capabilities.bodyQueries`. */
+  getBodyType(body: BodyHandle): BodyType | null;
+  /** Bridge round 2 — see `Capabilities.bodyQueries`. */
+  isBodyAwake(body: BodyHandle): boolean;
   setBodyTransform(body: BodyHandle, position: Vec3, rotation: Quat): void;
 
   addBox(body: BodyHandle, half: Vec3, material?: ShapeMaterial): ShapeHandle;
@@ -71,6 +78,10 @@ export interface World {
     material?: ShapeMaterial,
   ): ShapeHandle;
   addSensorBox(body: BodyHandle, half: Vec3): ShapeHandle;
+  /** Bridge round 2 — see `Capabilities.shapeMaterial`. */
+  setShapeFriction(shape: ShapeHandle, friction: number): void;
+  /** Bridge round 2 — see `Capabilities.shapeMaterial`. */
+  setShapeRestitution(shape: ShapeHandle, restitution: number): void;
 
   setLinearVelocity(body: BodyHandle, v: Vec3): void;
   getLinearVelocity(body: BodyHandle): Vec3Out;
@@ -80,6 +91,8 @@ export interface World {
   getAngularVelocity<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
 
   applyImpulse(body: BodyHandle, impulse: Vec3, at?: Vec3): void;
+  /** `at` (world point) is honored on builds with `Capabilities.forceAtPoint`
+   *  (bridge round 2); older builds apply at the center of mass and ignore `at`. */
   applyForce(body: BodyHandle, force: Vec3, at?: Vec3): void;
   applyTorque(body: BodyHandle, torque: Vec3): void;
   setKinematicTarget(body: BodyHandle, position: Vec3, rotation: Quat, dt: number): void;

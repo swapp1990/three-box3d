@@ -7,8 +7,8 @@
  * the contract between the loader and that API, and the single place export
  * signatures are pinned.
  *
- * Ground truth for the export list is `native/expected-exports.txt` (31 exports:
- * 29 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
+ * Ground truth for the export list is `native/expected-exports.txt` (37 exports:
+ * 35 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
  * ShapeHandle), NOT void — this was a documented bug in the old repo's `.d.ts`.
  *
  * Pointers are WASM linear-memory byte offsets (`number`). All floats are f32 on
@@ -79,9 +79,16 @@ export interface Box3DExports {
   b3bridge_get_linear_velocity(bodyHandle: number, outVelocity: Ptr): void;
   b3bridge_setAngularVelocity(bodyHandle: number, x: number, y: number, z: number): void;
   b3bridge_getAngularVelocity(bodyHandle: number, outVelocity: Ptr): void;
-  /** Force applied at center of mass only — the bridge uses ApplyForceToCenter
-   *  and ignores any application point (no `at` args on the C side). */
+  /** Force applied at center of mass only — use `b3bridge_applyForceAt` to apply
+   *  at a world point (this generates torque too, per b3Body_ApplyForce). */
   b3bridge_applyForce(bodyHandle: number, fx: number, fy: number, fz: number): void;
+  /** Force applied at a world point (`px,py,pz`). Wraps `b3Body_ApplyForce`,
+   *  which also imparts torque unless the point equals the center of mass. */
+  b3bridge_applyForceAt(
+    bodyHandle: number,
+    fx: number, fy: number, fz: number,
+    px: number, py: number, pz: number,
+  ): void;
   b3bridge_applyTorque(bodyHandle: number, tx: number, ty: number, tz: number): void;
   b3bridge_set_kinematic_target(
     bodyHandle: number,
@@ -134,6 +141,21 @@ export interface Box3DExports {
   b3bridge_set_awake(bodyHandle: number, awake: number): void;
   b3bridge_get_awake_body_count(worldHandle: number): number;
   b3bridge_get_body_count(worldHandle: number): number;
+  /** Returns the b3BodyType int (0=static, 1=kinematic, 2=dynamic), or -1 for
+   *  an invalid handle. */
+  b3bridge_getBodyType(bodyHandle: number): number;
+  /** Returns 1 if the body is awake, 0 if asleep or the handle is invalid. */
+  b3bridge_isBodyAwake(bodyHandle: number): number;
+
+  // --- world tuning ---
+  /** Full gravity vector (x,y,z) — supersedes the Y-only gravity passed to
+   *  `b3bridge_create_world` for worlds that need to change gravity post-create
+   *  or use a non-vertical gravity vector. */
+  b3bridge_setGravity(worldHandle: number, x: number, y: number, z: number): void;
+
+  // --- per-shape material (addressed by ShapeHandle, returned from add*Shape) ---
+  b3bridge_setShapeFriction(shapeHandle: number, friction: number): void;
+  b3bridge_setShapeRestitution(shapeHandle: number, restitution: number): void;
 
   // --- bulk read ---
   b3bridge_read_transforms(bodyHandlesPtr: Ptr, count: number, outTransformsPtr: Ptr): void;
