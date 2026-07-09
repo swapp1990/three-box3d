@@ -4,16 +4,32 @@
   "description": "React Three Fiber hooks for box3d — 3D physics for React Three Fiber, powered by box3d (Erin Catto).",
   "license": "MIT",
   "private": false,
-  "main": "index.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/swapp1990/three-box3d",
     "directory": "packages/react"
-  },
-  "peerDependencies": {
-    "@react-three/fiber": "^9",
-    "react": "^19",
-    "three": ">=0.159"
   },
   "keywords": [
     "box3d",
@@ -21,10 +37,35 @@
     "three.js",
     "threejs",
     "wasm",
+    "webassembly",
     "react-three-fiber",
+    "r3f",
     "react"
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "@react-three/fiber": "^9 || ^8",
+    "react": ">=18",
+    "three": ">=0.159"
+  },
+  "dependencies": {
+    "box3d-web": "0.0.0",
+    "three-box3d": "0.0.0"
+  },
+  "devDependencies": {
+    "@react-three/fiber": "^9.6.1",
+    "@react-three/test-renderer": "^9.1.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.0.1",
+    "@types/three": "^0.185.1",
+    "jsdom": "^25.0.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "three": "^0.185.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }
