@@ -4,23 +4,59 @@
   "description": "The flagship three.js adapter for box3d — 3D physics for three.js, powered by box3d (Erin Catto).",
   "license": "MIT",
   "private": false,
-  "main": "index.js",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/swapp1990/three-box3d",
     "directory": "packages/three"
-  },
-  "peerDependencies": {
-    "three": ">=0.159"
   },
   "keywords": [
     "box3d",
     "physics",
     "three.js",
     "threejs",
-    "wasm"
+    "wasm",
+    "webassembly",
+    "3d",
+    "game-physics",
+    "instancedmesh"
   ],
   "publishConfig": {
     "access": "public"
+  },
+  "peerDependencies": {
+    "three": ">=0.159"
+  },
+  "dependencies": {
+    "box3d-web": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/three": "^0.185.1",
+    "three": "^0.185.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
   }
 }

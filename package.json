@@ -12,8 +12,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w box3d-web",
-    "test": "npm run test -w box3d-web",
-    "typecheck": "npm run typecheck -w box3d-web"
+    "build": "npm run build -w box3d-web && npm run build -w three-box3d",
+    "test": "npm run test -w box3d-web && npm run test -w three-box3d",
+    "typecheck": "npm run typecheck -w box3d-web && npm run typecheck -w three-box3d"
   }
 }
