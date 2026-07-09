@@ -1,0 +1,31 @@
+{
+  "name": "r3f-playground-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Declarative R3F brick-stack demo for r3f-box3d — the hooks' proof + README hero.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.0.3",
+    "@react-three/fiber": "^9.6.1",
+    "box3d-web": "0.0.0",
+    "r3f-box3d": "0.0.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "three": "^0.185.1",
+    "three-box3d": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.1",
+    "@types/three": "^0.185.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.4.0"
+  }
+}
