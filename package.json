@@ -1,0 +1,14 @@
+{
+  "name": "three-box3d-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Monorepo for three-box3d — 3D physics for three.js, powered by box3d (Erin Catto).",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swapp1990/three-box3d"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
+}

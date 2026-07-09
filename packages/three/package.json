@@ -1,0 +1,26 @@
+{
+  "name": "three-box3d",
+  "version": "0.0.0",
+  "description": "The flagship three.js adapter for box3d — 3D physics for three.js, powered by box3d (Erin Catto).",
+  "license": "MIT",
+  "private": false,
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swapp1990/three-box3d",
+    "directory": "packages/three"
+  },
+  "peerDependencies": {
+    "three": ">=0.159"
+  },
+  "keywords": [
+    "box3d",
+    "physics",
+    "three.js",
+    "threejs",
+    "wasm"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

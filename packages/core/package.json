@@ -1,0 +1,22 @@
+{
+  "name": "box3d-web",
+  "version": "0.0.0",
+  "description": "Core WASM build + idiomatic typed TypeScript API for box3d — 3D physics for the web, powered by box3d (Erin Catto).",
+  "license": "MIT",
+  "private": false,
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swapp1990/three-box3d",
+    "directory": "packages/core"
+  },
+  "keywords": [
+    "box3d",
+    "physics",
+    "wasm",
+    "webassembly"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

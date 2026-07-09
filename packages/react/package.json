@@ -1,0 +1,30 @@
+{
+  "name": "r3f-box3d",
+  "version": "0.0.0",
+  "description": "React Three Fiber hooks for box3d — 3D physics for React Three Fiber, powered by box3d (Erin Catto).",
+  "license": "MIT",
+  "private": false,
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/swapp1990/three-box3d",
+    "directory": "packages/react"
+  },
+  "peerDependencies": {
+    "@react-three/fiber": "^9",
+    "react": "^19",
+    "three": ">=0.159"
+  },
+  "keywords": [
+    "box3d",
+    "physics",
+    "three.js",
+    "threejs",
+    "wasm",
+    "react-three-fiber",
+    "react"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}
