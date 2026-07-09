@@ -9,7 +9,8 @@
     "url": "https://github.com/swapp1990/three-box3d"
   },
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/vanilla-three"
   ],
   "scripts": {
     "build": "npm run build -w box3d-web && npm run build -w three-box3d",

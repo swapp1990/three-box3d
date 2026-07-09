@@ -1,0 +1,21 @@
+{
+  "name": "vanilla-three-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Source-visible vanilla three.js example pages for three-box3d.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "box3d-web": "0.0.0",
+    "three": "^0.185.1",
+    "three-box3d": "0.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.4.0"
+  }
+}

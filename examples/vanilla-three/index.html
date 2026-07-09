@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>three-box3d — vanilla examples</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./shared/style.css" />
+    <style>
+      body {
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="gallery">
+      <div class="gallery-header">
+        <h1>three-box3d</h1>
+        <p>
+          3D physics for three.js, powered by <a href="https://github.com/erincatto/box3d" style="color: inherit">box3d</a>
+          (Erin Catto). Plain three.js, zero framework — every page below is a
+          self-contained <code>index.html</code> + <code>main.ts</code> with a
+          "View source" link.
+        </p>
+      </div>
+      <div class="gallery-grid">
+        <a class="card" href="./stack/index.html">
+          <h2>Brick Stack</h2>
+          <p>
+            A settled 8×6 brick wall you can click-impulse. FixedStepper,
+            TransformBuffer, SleepManager (island-aware sleep), InstancedMesh sync.
+          </p>
+          <span class="tag">radialImpulse · SleepManager</span>
+        </a>
+        <a class="card" href="./ball-drop/index.html">
+          <h2>Ball Drop</h2>
+          <p>
+            Spheres rain onto a floor forever, capped by a BodyPool that evicts the
+            oldest ball once the pool is full.
+          </p>
+          <span class="tag">BodyPool</span>
+        </a>
+        <a class="card" href="./raycast-pick/index.html">
+          <h2>Raycast Pick</h2>
+          <p>
+            Click to pick a body straight from the physics world via
+            <code>raycastFromCamera</code> and launch it with an impulse.
+          </p>
+          <span class="tag">raycastFromCamera</span>
+        </a>
+        <a class="card" href="./contact-pulse/index.html">
+          <h2>Contact Pulse</h2>
+          <p>
+            Tumbling cubes flash on impact — contact-begin events drive a
+            per-instance color pulse scaled by approach speed.
+          </p>
+          <span class="tag">drainContactBeginEvents · setColorAt</span>
+        </a>
+      </div>
+      <div class="gallery-footer">
+        <a href="https://github.com/swapp1990/three-box3d" target="_blank" rel="noopener noreferrer">
+          github.com/swapp1990/three-box3d
+        </a>
+      </div>
+    </div>
+  </body>
+</html>
