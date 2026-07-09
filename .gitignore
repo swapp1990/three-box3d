@@ -4,6 +4,9 @@ dist/
 .DS_Store
 scratch/
 native/box3d/
+docs-site/api/
+docs-site/.vitepress/dist/
+docs-site/.vitepress/cache/
 
 # checked-in wasm build artifacts (mirrors the old repo's committed-WASM policy)
 !native/dist/

@@ -1,0 +1,20 @@
+{
+  "entryPointStrategy": "packages",
+  "entryPoints": [
+    "packages/core",
+    "packages/three",
+    "packages/react"
+  ],
+  "plugin": [
+    "typedoc-plugin-markdown"
+  ],
+  "out": "docs-site/api",
+  "readme": "none",
+  "githubPages": false,
+  "hideBreadcrumbs": true,
+  "entryFileName": "index.md",
+  "gitRevision": "main",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "name": "three-box3d API"
+}

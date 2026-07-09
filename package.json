@@ -16,6 +16,20 @@
   "scripts": {
     "build": "npm run build -w box3d-web && npm run build -w three-box3d && npm run build -w r3f-box3d",
     "test": "npm run test -w box3d-web && npm run test -w three-box3d && npm run test -w r3f-box3d",
-    "typecheck": "npm run typecheck -w box3d-web && npm run typecheck -w three-box3d && npm run typecheck -w r3f-box3d"
+    "typecheck": "npm run typecheck -w box3d-web && npm run typecheck -w three-box3d && npm run typecheck -w r3f-box3d",
+    "benchmark": "node benchmarks/run.mjs",
+    "docs:api": "typedoc",
+    "docs:dev": "vitepress dev docs-site",
+    "docs:build": "vitepress build docs-site",
+    "docs:preview": "vitepress preview docs-site",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "npm run build && changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.11",
+    "typedoc": "^0.28.1",
+    "typedoc-plugin-markdown": "^4.12.0",
+    "vitepress": "^1.6.3"
   }
 }
