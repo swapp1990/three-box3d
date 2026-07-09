@@ -1,16 +1,19 @@
-# Changesets release automation. On pushes to main with pending changesets,
-# opens/updates a "Version Packages" PR; when that PR merges, publishes the
-# three packages (they version together via the `fixed` group in
+# Changesets release automation. Run manually with pending changesets to
+# open/update a "Version Packages" PR; run again after that PR merges to
+# publish the three packages (they version together via the `fixed` group in
 # .changeset/config.json).
 #
-# NOTE: publishing stays DORMANT until the v0.1.0 launch — the workflow is
-# wired, but it only publishes once the NPM_TOKEN repository secret is set.
-# Without the secret, the publish step fails fast and versioning PRs still work.
+# DORMANT until the v0.1.0 launch — manual dispatch only, so main never gets
+# a red X from release plumbing before we ship. To go live at launch:
+#   1. add the NPM_TOKEN repository secret,
+#   2. enable "Allow GitHub Actions to create and approve pull requests"
+#      (Settings → Actions → General → Workflow permissions) — without it the
+#      version-PR step fails with an HttpError,
+#   3. restore the `push: branches: [main]` trigger.
 name: release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

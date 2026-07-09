@@ -95,9 +95,9 @@ function addLighting(scene: Scene): void {
   scene.add(target);
 
   // Warm amber key — the shadow caster. (color, intensity, distance, angle, penumbra, decay)
-  // Intensity tuned so lit faces keep their albedo hue instead of blowing out
-  // to cream under ACES (QA pass on the restyle).
-  const key = new SpotLight(0xffb85a, 1050, 46, 0.62, 0.6, 1.7);
+  // Intensity tuned (QA rounds 1–2) so lit faces keep their albedo hue instead
+  // of blowing out to cream under ACES — the palette variance must stay legible.
+  const key = new SpotLight(0xffc370, 880, 46, 0.62, 0.6, 1.7);
   key.position.set(-8, 10, 5);
   key.target = target;
   key.castShadow = true;
@@ -139,7 +139,7 @@ function makeGroundTexture(): CanvasTexture {
       const br = 26 + Math.random() * 44;
       const light = Math.random() < 0.45;
       const grad = ctx.createRadialGradient(bx, by, 2, bx, by, br);
-      grad.addColorStop(0, light ? 'rgba(150, 165, 200, 0.06)' : 'rgba(0, 0, 0, 0.32)');
+      grad.addColorStop(0, light ? 'rgba(160, 175, 205, 0.11)' : 'rgba(0, 0, 0, 0.42)');
       grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(bx - br, by - br, br * 2, br * 2);
@@ -150,7 +150,7 @@ function makeGroundTexture(): CanvasTexture {
       const y = Math.random() * 256;
       const w = 2 + Math.random() * 18;
       const h = 1 + Math.random() * 2.5;
-      ctx.fillStyle = Math.random() < 0.45 ? 'rgba(150, 165, 200, 0.06)' : 'rgba(0, 0, 0, 0.28)';
+      ctx.fillStyle = Math.random() < 0.45 ? 'rgba(160, 175, 205, 0.1)' : 'rgba(0, 0, 0, 0.36)';
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(Math.random() * Math.PI);
@@ -158,8 +158,8 @@ function makeGroundTexture(): CanvasTexture {
       ctx.restore();
     }
     // Paving seams.
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.55)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+    ctx.lineWidth = 4;
     for (let p = 0; p <= 256; p += 64) {
       ctx.beginPath();
       ctx.moveTo(p, 0);

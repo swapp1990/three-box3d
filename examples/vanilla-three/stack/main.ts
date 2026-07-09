@@ -35,7 +35,9 @@ addBackLink();
 addHint('Click a brick to blast it — drag to orbit, scroll to zoom');
 const hud = createHud('Brick Stack');
 
-const { scene, camera, renderer } = createBaseScene({ cameraPosition: [9, 7, 11] });
+// Hero framing: close enough that the wall fills the frame (matches the
+// r3f-playground example's proportions) instead of floating in dead black.
+const { scene, camera, renderer } = createBaseScene({ cameraPosition: [4.8, 3.4, 6.4] });
 renderer.shadowMap.type = PCFSoftShadowMap;
 addGroundPlane(scene, 60);
 
@@ -88,8 +90,10 @@ mesh.receiveShadow = true;
 mesh.boundingSphere = new Sphere(new Vector3(0, 2, 0), 12);
 scene.add(mesh);
 
-// Warm terracotta bricks with per-brick jitter, plus the occasional cool-slate
-// or gold accent course so the wall reads as varied masonry, not one flat tone.
+// Varied masonry palette with real VALUE separation, chosen so at least three
+// distinct tones survive the warm key light + ACES tonemapping: deep oxblood,
+// mid terracotta, sand-gold, and cool slate. Accent probability is high enough
+// (~1 in 4) that every course shows variance.
 // (All via setColorAt / instanceColor — vertexColors stays false, see above.)
 const brickColor = new Color();
 for (let i = 0; i < bricks.length; i++) {
@@ -97,12 +101,14 @@ for (let i = 0; i < bricks.length; i++) {
   const t = jitter - Math.floor(jitter);
   const accent = Math.sin(i * 78.233) * 43758.5453;
   const a = accent - Math.floor(accent);
-  if (a > 0.9) {
-    brickColor.setHSL(0.11, 0.62, 0.46 + t * 0.08); // gold accent brick
-  } else if (a > 0.8) {
-    brickColor.setHSL(0.6, 0.22, 0.36 + t * 0.08); // cool slate brick
+  if (a > 0.88) {
+    brickColor.setHSL(0.105, 0.68, 0.52 + t * 0.06); // sand-gold accent
+  } else if (a > 0.76) {
+    brickColor.setHSL(0.58, 0.3, 0.24 + t * 0.05); // cool slate — dark, cool, unmissable
+  } else if (a > 0.5) {
+    brickColor.setHSL(0.02 + t * 0.015, 0.6, 0.22 + t * 0.05); // deep oxblood
   } else {
-    brickColor.setHSL(0.045 + t * 0.03, 0.55, 0.36 + t * 0.12); // terracotta
+    brickColor.setHSL(0.05 + t * 0.02, 0.58, 0.38 + t * 0.07); // mid terracotta
   }
   mesh.setColorAt(i, brickColor);
 }
