@@ -1,0 +1,81 @@
+# Build every example + the docs site on push/PR; deploy the combined static
+# site (gallery at /, r3f playground at /r3f-playground/, docs at /docs/) to
+# GitHub Pages on pushes to main. Examples are the product — a broken example
+# build fails the PR.
+name: examples-build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: examples-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Project-pages base path (https://<user>.github.io/three-box3d/).
+  PAGES_BASE: /three-box3d/
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build packages
+        run: npm run build
+
+      - name: Build vanilla gallery
+        run: npm run build -w vanilla-three-examples -- --base=${{ env.PAGES_BASE }}
+
+      - name: Build r3f playground
+        run: npm run build -w r3f-playground-example -- --base=${{ env.PAGES_BASE }}r3f-playground/
+
+      - name: Generate API reference (TypeDoc → markdown)
+        run: npm run docs:api
+
+      - name: Build docs site
+        run: npm run docs:build
+        env:
+          DOCS_BASE: ${{ env.PAGES_BASE }}docs/
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r examples/vanilla-three/dist/* _site/
+          mkdir -p _site/r3f-playground
+          cp -r examples/r3f-playground/dist/* _site/r3f-playground/
+          mkdir -p _site/docs
+          cp -r docs-site/.vitepress/dist/* _site/docs/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

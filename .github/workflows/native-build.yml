@@ -1,0 +1,50 @@
+# Reproducibility proof for the committed WASM artifact. Manual dispatch only:
+# installs the PINNED Emscripten (6.0.2), fetches box3d at the pinned commit,
+# rebuilds native/dist/box3d.{js,wasm}, and asserts the rebuilt binary is
+# byte-identical to the committed one (git diff --exit-code). If this job goes
+# red after an intentional native change, the change forgot to commit the new
+# artifact (or the toolchain pin drifted).
+name: native-build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emscripten (pinned 6.0.2)
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.2
+          actions-cache-folder: emsdk-cache
+
+      - name: Fetch box3d at the pinned commit
+        run: bash native/scripts/fetch-box3d.sh
+
+      - name: Rebuild WASM
+        # setup-emsdk exports EMSDK pointing at the emsdk root, which is
+        # exactly what build-wasm.sh's EMSDK_DIR expects.
+        run: bash native/scripts/build-wasm.sh
+        env:
+          EMSDK_DIR: ${{ env.EMSDK }}
+
+      - name: Assert artifact reproduces the committed binary
+        run: |
+          git diff --stat native/dist/
+          git diff --exit-code native/dist/box3d.wasm
+          echo "Rebuilt box3d.wasm is byte-identical to the committed artifact."
+
+      - name: Assert the core package's copy matches
+        run: |
+          npm run sync-wasm -w box3d-web
+          git diff --exit-code packages/core/wasm/box3d.wasm
+          echo "packages/core/wasm/box3d.wasm matches native/dist/box3d.wasm."
+
+      - name: Report SHA256
+        run: sha256sum native/dist/box3d.wasm packages/core/wasm/box3d.wasm

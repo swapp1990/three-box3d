@@ -1,0 +1,38 @@
+# Core CI: typecheck + unit tests + package builds on every push/PR.
+# The WASM is a prebuilt committed artifact, so this needs no Emscripten —
+# tests instantiate the real binary in Node.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Build first: packages/three and packages/react typecheck against
+      # box3d-web's emitted .d.ts (workspace symlink → dist/).
+      - name: Build all packages
+        run: npm run build
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Test all packages
+        run: npm test

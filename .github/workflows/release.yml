@@ -1,0 +1,52 @@
+# Changesets release automation. On pushes to main with pending changesets,
+# opens/updates a "Version Packages" PR; when that PR merges, publishes the
+# three packages (they version together via the `fixed` group in
+# .changeset/config.json).
+#
+# NOTE: publishing stays DORMANT until the v0.1.0 launch — the workflow is
+# wired, but it only publishes once the NPM_TOKEN repository secret is set.
+# Without the secret, the publish step fails fast and versioning PRs still work.
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency: release-${{ github.ref }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # changesets/action pushes the version PR branch
+      pull-requests: write # …and opens/updates the PR
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # changesets needs history to compute changed packages
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        run: npm ci
+
+      - name: Create version PR or publish
+        uses: changesets/action@v1
+        with:
+          # `npm run release` = build all packages, then `changeset publish`.
+          publish: npm run release
+          version: npm run version-packages
+          commit: 'chore(release): version packages'
+          title: 'chore(release): version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
