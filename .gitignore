@@ -10,3 +10,4 @@ docs-site/.vitepress/cache/
 
 # checked-in wasm build artifacts (mirrors the old repo's committed-WASM policy)
 !native/dist/
+.launch/
