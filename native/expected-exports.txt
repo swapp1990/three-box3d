@@ -20,8 +20,16 @@
 #
 # Bridge round 2 (see docs/api-design.md "v0.1 addendum") adds 6 more wrappers
 # (applyForceAt, getBodyType, isBodyAwake, setGravity, setShapeFriction,
-# setShapeRestitution) for a total of 37, on top of the sensor-visitor fix in
-# Bridge_MakeShapeDef (no export-surface change, same 31 -> now 37 exports).
+# setShapeRestitution) for a total of 37. The sports-ball foundation adds 8
+# wrappers (center impulse, damping/gravity-scale getters and setters, body mass)
+# for 45 bridge exports. Body-inertia read/write adds 2 more wrappers, for 47
+# bridge exports.
+#
+# v0.5 joint-motor + filter-joint slice (see docs/api-design.md "v0.5 addendum")
+# adds 3 more wrappers: create_filter_joint, set_revolute_motor,
+# set_spherical_motor, plus enableMotor/motor params folded into the EXISTING
+# create_spherical_joint / create_revolute_joint signatures (param count grows,
+# export name does not) — for 50 bridge exports and 52 total including malloc/free.
 
 _malloc
 _free
@@ -31,12 +39,14 @@ _b3bridge_add_capsule_shape
 _b3bridge_add_sensor_box_shape
 _b3bridge_add_sphere_shape
 _b3bridge_apply_impulse
+_b3bridge_applyImpulseToCenter
 _b3bridge_applyForce
 _b3bridge_applyForceAt
 _b3bridge_applyTorque
 _b3bridge_cast_ray_closest
 _b3bridge_create_body
 _b3bridge_create_distance_joint_ex
+_b3bridge_create_filter_joint
 _b3bridge_create_revolute_joint
 _b3bridge_create_spherical_joint
 _b3bridge_create_world
@@ -50,16 +60,27 @@ _b3bridge_get_awake_body_count
 _b3bridge_get_body_count
 _b3bridge_get_linear_velocity
 _b3bridge_getAngularVelocity
+_b3bridge_getAngularDamping
+_b3bridge_getBodyInertia
+_b3bridge_getBodyMass
 _b3bridge_getBodyType
+_b3bridge_getGravityScale
+_b3bridge_getLinearDamping
 _b3bridge_isBodyAwake
 _b3bridge_read_transforms
 _b3bridge_set_awake
 _b3bridge_set_body_type
 _b3bridge_set_kinematic_target
 _b3bridge_set_linear_velocity
+_b3bridge_set_revolute_motor
+_b3bridge_set_spherical_motor
 _b3bridge_setAngularVelocity
+_b3bridge_setAngularDamping
+_b3bridge_setBodyInertia
 _b3bridge_setBodyTransform
 _b3bridge_setGravity
+_b3bridge_setGravityScale
+_b3bridge_setLinearDamping
 _b3bridge_setShapeFriction
 _b3bridge_setShapeRestitution
 _b3bridge_step

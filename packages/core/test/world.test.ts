@@ -14,6 +14,22 @@ afterEach(() => {
 });
 
 describe('World lifecycle & bodies', () => {
+  it('honors full-vector gravity at world creation', () => {
+    const world = b3.createWorld({
+      gravity: [3, 0, -2],
+      enableSleep: false,
+      enableContinuous: false,
+    });
+    const body = world.createBody({ type: 'dynamic' });
+    world.addSphere(body, 0.5);
+    world.step(1 / 60, 4);
+    const velocity = world.getLinearVelocity(body);
+    expect(velocity.x).toBeGreaterThan(0);
+    expect(Math.abs(velocity.y)).toBeLessThan(1e-5);
+    expect(velocity.z).toBeLessThan(0);
+    world.destroy();
+  });
+
   it('creates and destroys bodies; counters track', () => {
     const world = b3.createWorld();
     expect(world.bodyCount()).toBe(0);
@@ -44,6 +60,78 @@ describe('World lifecycle & bodies', () => {
     const shape = world.addBox(body, [0.5, 0.5, 0.5], { friction: 0.6, restitution: 0 });
     expect(() => world.setShapeFriction(shape, 0.1)).not.toThrow();
     expect(() => world.setShapeRestitution(shape, 0.9)).not.toThrow();
+    world.destroy();
+  });
+
+  it('supports body damping, gravity scale, rolling resistance, mass, and inertia queries', () => {
+    const world = b3.createWorld();
+    const body = world.createBody({
+      type: 'dynamic',
+      linearDamping: 0.1,
+      angularDamping: 0.2,
+      gravityScale: 0.5,
+    });
+    world.addSphere(body, 0.5, { density: 3, rollingResistance: 0.25 });
+
+    expect(world.getLinearDamping(body)).toBeCloseTo(0.1);
+    expect(world.getAngularDamping(body)).toBeCloseTo(0.2);
+    expect(world.getGravityScale(body)).toBeCloseTo(0.5);
+    const mass = world.getBodyMass(body);
+    expect(mass).toBeCloseTo((4 / 3) * Math.PI * 0.5 ** 3 * 3, 4);
+
+    const expectedInertia = (2 / 5) * mass * 0.5 ** 2;
+    const inertia = world.getBodyInertia(body);
+    expect(inertia.x).toBeCloseTo(expectedInertia, 5);
+    expect(inertia.y).toBeCloseTo(expectedInertia, 5);
+    expect(inertia.z).toBeCloseTo(expectedInertia, 5);
+
+    const inertiaOut = new Float32Array(3);
+    expect(world.getBodyInertia(body, inertiaOut)).toBe(inertiaOut);
+    expect([...inertiaOut]).toEqual([inertia.x, inertia.y, inertia.z]);
+
+    // A hollow thin-shell sphere has I = 2/3*m*r^2 rather than the solid
+    // sphere's shape-derived I = 2/5*m*r^2.
+    const thinShellInertia = (2 / 3) * mass * 0.5 ** 2;
+    world.setBodyInertia(body, [thinShellInertia, thinShellInertia, thinShellInertia]);
+    const overriddenInertia = world.getBodyInertia(body);
+    expect(overriddenInertia.x).toBeCloseTo(thinShellInertia, 5);
+    expect(overriddenInertia.y).toBeCloseTo(thinShellInertia, 5);
+    expect(overriddenInertia.z).toBeCloseTo(thinShellInertia, 5);
+    expect(world.getBodyMass(body)).toBeCloseTo(mass, 6);
+
+    expect(() => world.setBodyInertia(body, [0, 1, 1])).toThrow(RangeError);
+    expect(() => world.setBodyInertia(body, [1, Number.NaN, 1])).toThrow(RangeError);
+    expect(world.getBodyInertia(body).x).toBeCloseTo(thinShellInertia, 5);
+
+    world.setLinearDamping(body, 0.4);
+    world.setAngularDamping(body, 0.6);
+    world.setGravityScale(body, 1.5);
+    expect(world.getLinearDamping(body)).toBeCloseTo(0.4);
+    expect(world.getAngularDamping(body)).toBeCloseTo(0.6);
+    expect(world.getGravityScale(body)).toBeCloseTo(1.5);
+    world.destroy();
+  });
+
+  it('uses a thin-shell inertia override in angular dynamics', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0], enableSleep: false });
+    const solid = world.createBody({ type: 'dynamic' });
+    const shell = world.createBody({ type: 'dynamic', position: [2, 0, 0] });
+    const radius = 0.5;
+    world.addSphere(solid, radius, { density: 3 });
+    world.addSphere(shell, radius, { density: 3 });
+
+    const mass = world.getBodyMass(shell);
+    const thinShellInertia = (2 / 3) * mass * radius ** 2;
+    world.setBodyInertia(shell, [thinShellInertia, thinShellInertia, thinShellInertia]);
+
+    world.applyTorque(solid, [0, 1, 0]);
+    world.applyTorque(shell, [0, 1, 0]);
+    world.step(1 / 60, 1);
+
+    const solidSpin = world.getAngularVelocity(solid).y;
+    const shellSpin = world.getAngularVelocity(shell).y;
+    expect(shellSpin).toBeGreaterThan(0);
+    expect(shellSpin / solidSpin).toBeCloseTo(3 / 5, 4);
     world.destroy();
   });
 
@@ -185,6 +273,20 @@ describe('velocities, forces, impulses, kinematics', () => {
     world.destroy();
   });
 
+  it('applyImpulseToCenter does not impart torque away from the world origin', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const body = world.createBody({ type: 'dynamic', position: [10, 5, 0] });
+    world.addBox(body, [0.5, 0.5, 0.5]);
+
+    world.applyImpulseToCenter(body, [0, 0, 1]);
+    expect(world.getLinearVelocity(body).z).toBeGreaterThan(0);
+    expect(world.getAngularVelocity(body).y).toBeCloseTo(0, 6);
+
+    world.applyImpulse(body, [0, 0, 1], [10.5, 5, 0]);
+    expect(Math.abs(world.getAngularVelocity(body).y)).toBeGreaterThan(0);
+    world.destroy();
+  });
+
   it('applyForce / applyTorque do not throw and are consumed at step', () => {
     const world = b3.createWorld();
     const body = world.createBody({ type: 'dynamic', position: [0, 5, 0] });
@@ -268,6 +370,177 @@ describe('joints', () => {
   });
 });
 
+describe('joint motors (v0.5)', () => {
+  it('a revolute motor spins a hinged arm toward its target speed', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const arm = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addBox(arm, [0.5, 0.1, 0.1], { density: 1 });
+    world.createRevoluteJoint(anchor, arm, {
+      axis: [0, 0, 1],
+      motor: { speed: 5, maxTorque: 1000 },
+    });
+    for (let i = 0; i < 180; i++) world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(arm);
+    // Ample torque budget — the arm should have caught up to the target speed.
+    expect(w.z).toBeCloseTo(5, 1);
+    expect(Math.abs(w.x)).toBeLessThan(1e-3);
+    expect(Math.abs(w.y)).toBeLessThan(1e-3);
+    world.destroy();
+  });
+
+  it('a revolute motor with a tiny maxTorque cannot reach its target speed (torque clamp)', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const arm = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addBox(arm, [0.5, 0.1, 0.1], { density: 1 });
+    world.createRevoluteJoint(anchor, arm, {
+      axis: [0, 0, 1],
+      motor: { speed: 5, maxTorque: 0.001 },
+    });
+    for (let i = 0; i < 180; i++) world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(arm);
+    // Starved of torque — far short of the 5 rad/s target, but still moving
+    // (proves the motor is driving, not merely inert).
+    expect(w.z).toBeGreaterThan(0);
+    expect(w.z).toBeLessThan(2);
+    world.destroy();
+  });
+
+  it('a revolute joint created without `motor` does not spin (motor disabled = no drive)', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const arm = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addBox(arm, [0.5, 0.1, 0.1], { density: 1 });
+    world.createRevoluteJoint(anchor, arm, { axis: [0, 0, 1] });
+    for (let i = 0; i < 60; i++) world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(arm);
+    expect(Math.abs(w.z)).toBeLessThan(1e-4);
+    world.destroy();
+  });
+
+  it('setRevoluteMotor enables a motor after creation and disables it with null', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const arm = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addBox(arm, [0.5, 0.1, 0.1], { density: 1 });
+    const joint = world.createRevoluteJoint(anchor, arm, { axis: [0, 0, 1] });
+
+    // Not created with a motor — starts inert.
+    for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
+    expect(Math.abs(world.getAngularVelocity(arm).z)).toBeLessThan(1e-4);
+
+    // Enable at runtime; should spin up.
+    world.setRevoluteMotor(joint, { speed: 5, maxTorque: 1000 });
+    for (let i = 0; i < 180; i++) world.step(1 / 60, 4);
+    const spun = world.getAngularVelocity(arm).z;
+    expect(spun).toBeCloseTo(5, 1);
+
+    // Disable; angular velocity should stop being driven (no longer growing
+    // toward the target — since it's already AT the target, disabling just
+    // frees the joint, so we instead check it doesn't overshoot further and
+    // coasts rather than being clamped back to the old target).
+    world.setRevoluteMotor(joint, null);
+    for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
+    // Free spin, no damping in this scene — should still be close to `spun`.
+    expect(world.getAngularVelocity(arm).z).toBeCloseTo(spun, 0);
+    world.destroy();
+  });
+
+  it('a spherical motor drives angular velocity toward the target', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const ball = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addSphere(ball, 0.3, { density: 1 });
+    world.createSphericalJoint(anchor, ball, {
+      motor: { velocity: [0, 5, 0], maxTorque: 1000 },
+    });
+    for (let i = 0; i < 180; i++) world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(ball);
+    expect(w.y).toBeCloseTo(5, 0);
+    world.destroy();
+  });
+
+  it('a spherical joint created without `motor` does not spin', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const ball = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addSphere(ball, 0.3, { density: 1 });
+    world.createSphericalJoint(anchor, ball, {});
+    for (let i = 0; i < 60; i++) world.step(1 / 60, 4);
+    const w = world.getAngularVelocity(ball);
+    expect(Math.abs(w.x)).toBeLessThan(1e-4);
+    expect(Math.abs(w.y)).toBeLessThan(1e-4);
+    expect(Math.abs(w.z)).toBeLessThan(1e-4);
+    world.destroy();
+  });
+
+  it('setSphericalMotor enables a motor after creation and disables it with null', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0] });
+    const anchor = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(anchor, [0.1, 0.1, 0.1]);
+    const ball = world.createBody({ type: 'dynamic', position: [0, 0, 0] });
+    world.addSphere(ball, 0.3, { density: 1 });
+    const joint = world.createSphericalJoint(anchor, ball, {});
+
+    for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
+    expect(Math.abs(world.getAngularVelocity(ball).y)).toBeLessThan(1e-4);
+
+    world.setSphericalMotor(joint, { velocity: [0, 5, 0], maxTorque: 1000 });
+    for (let i = 0; i < 180; i++) world.step(1 / 60, 4);
+    expect(world.getAngularVelocity(ball).y).toBeCloseTo(5, 0);
+
+    world.setSphericalMotor(joint, null);
+    world.destroy();
+  });
+});
+
+describe('filter joint (v0.5)', () => {
+  it('disables collision between two overlapping dynamic bodies; destroyJoint restores it', () => {
+    // Default gravity (not zeroed): both spheres free-fall together, which
+    // keeps them awake for the whole test and sidesteps sleep entirely — a
+    // resting zero-velocity pair would settle to sleep and never re-collide
+    // after the filter is removed, since sleeping islands aren't stepped.
+    const world = b3.createWorld();
+    const a = world.createBody({ type: 'dynamic', position: [0, 20, 0] });
+    world.addSphere(a, 0.5, { density: 1 });
+    const b = world.createBody({ type: 'dynamic', position: [0, 20, 0] });
+    world.addSphere(b, 0.5, { density: 1 });
+
+    const joint = world.createFilterJoint(a, b);
+    expect(joint).toBeGreaterThan(0);
+
+    const out = new Float32Array(14);
+    const ids = new Int32Array([a, b]);
+    const distanceOf = (): number => {
+      world.readTransforms(ids, out);
+      const dx = out[7] - out[0];
+      const dy = out[8] - out[1];
+      const dz = out[9] - out[2];
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    };
+
+    for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
+    // Fully overlapping, identical mass/shape, filtered — both fall at the
+    // same rate with no depenetration impulse, so they stay coincident
+    // instead of being pushed apart by the contact solver.
+    expect(distanceOf()).toBeLessThan(0.01);
+
+    world.destroyJoint(joint);
+    for (let i = 0; i < 30; i++) world.step(1 / 60, 4);
+    // Collision restored — the solver now pushes the overlapping spheres apart.
+    expect(distanceOf()).toBeGreaterThan(0.5);
+
+    world.destroy();
+  });
+});
+
 describe('queries', () => {
   it('castRayClosest hits a body and returns a readonly point', () => {
     const world = b3.createWorld();
@@ -322,7 +595,16 @@ describe('sleep control & capabilities', () => {
     expect(caps.bodyQueries).toBe(true);
     expect(caps.setGravity).toBe(true);
     expect(caps.shapeMaterial).toBe(true);
+    expect(caps.bodyInertia).toBe(true);
+    expect(caps.setBodyInertia).toBe(true);
+    expect(caps.has('bodyInertia')).toBe(true);
+    expect(caps.has('setBodyInertia')).toBe(true);
     expect(caps.has('shapeMaterial')).toBe(true);
+    // v0.5 joint-motor + filter-joint slice — present in this build.
+    expect(caps.jointMotors).toBe(true);
+    expect(caps.filterJoint).toBe(true);
+    expect(caps.has('jointMotors')).toBe(true);
+    expect(caps.has('filterJoint')).toBe(true);
     world.destroy();
   });
 

@@ -7,8 +7,8 @@
  * the contract between the loader and that API, and the single place export
  * signatures are pinned.
  *
- * Ground truth for the export list is `native/expected-exports.txt` (37 exports:
- * 35 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
+ * Ground truth for the export list is `native/expected-exports.txt` (52 exports:
+ * 50 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
  * ShapeHandle), NOT void — this was a documented bug in the old repo's `.d.ts`.
  *
  * Pointers are WASM linear-memory byte offsets (`number`). All floats are f32 on
@@ -31,7 +31,10 @@ export interface Box3DExports {
   free(ptr: Ptr): void;
 
   // --- world lifecycle ---
-  b3bridge_create_world(gravityY: number): number;
+  b3bridge_create_world(
+    gravityX: number, gravityY: number, gravityZ: number,
+    enableSleep: number, enableContinuous: number,
+  ): number;
   b3bridge_destroy_world(worldHandle: number): void;
   b3bridge_step(worldHandle: number, dt: number, substeps: number): void;
 
@@ -42,6 +45,7 @@ export interface Box3DExports {
     x: number, y: number, z: number,
     qx: number, qy: number, qz: number, qw: number,
     ccd: number,
+    linearDamping: number, angularDamping: number, gravityScale: number,
   ): number;
   b3bridge_destroy_body(bodyHandle: number): void;
   b3bridge_set_body_type(bodyHandle: number, type: number): void;
@@ -55,17 +59,17 @@ export interface Box3DExports {
   b3bridge_add_box_shape(
     bodyHandle: number,
     hx: number, hy: number, hz: number,
-    density: number, friction: number, restitution: number,
+    density: number, friction: number, restitution: number, rollingResistance: number,
   ): number;
   b3bridge_add_sphere_shape(
     bodyHandle: number,
     radius: number,
-    density: number, friction: number, restitution: number,
+    density: number, friction: number, restitution: number, rollingResistance: number,
   ): number;
   b3bridge_add_capsule_shape(
     bodyHandle: number,
     radius: number, halfHeight: number,
-    density: number, friction: number, restitution: number,
+    density: number, friction: number, restitution: number, rollingResistance: number,
   ): number;
   b3bridge_add_sensor_box_shape(bodyHandle: number, hx: number, hy: number, hz: number): number;
 
@@ -75,10 +79,28 @@ export interface Box3DExports {
     ix: number, iy: number, iz: number,
     px: number, py: number, pz: number,
   ): void;
+  b3bridge_applyImpulseToCenter(
+    bodyHandle: number,
+    ix: number, iy: number, iz: number,
+  ): void;
   b3bridge_set_linear_velocity(bodyHandle: number, vx: number, vy: number, vz: number): void;
   b3bridge_get_linear_velocity(bodyHandle: number, outVelocity: Ptr): void;
   b3bridge_setAngularVelocity(bodyHandle: number, x: number, y: number, z: number): void;
   b3bridge_getAngularVelocity(bodyHandle: number, outVelocity: Ptr): void;
+  b3bridge_setLinearDamping(bodyHandle: number, damping: number): void;
+  b3bridge_getLinearDamping(bodyHandle: number): number;
+  b3bridge_setAngularDamping(bodyHandle: number, damping: number): void;
+  b3bridge_getAngularDamping(bodyHandle: number): number;
+  b3bridge_setGravityScale(bodyHandle: number, scale: number): void;
+  b3bridge_getGravityScale(bodyHandle: number): number;
+  b3bridge_getBodyMass(bodyHandle: number): number;
+  /** Local-space diagonal rotational inertia `(Ixx, Iyy, Izz)`, kg*m^2. */
+  b3bridge_getBodyInertia(bodyHandle: number, outInertia: Ptr): void;
+  /** Replaces only the local-space diagonal rotational inertia. */
+  b3bridge_setBodyInertia(
+    bodyHandle: number,
+    ixx: number, iyy: number, izz: number,
+  ): void;
   /** Force applied at center of mass only — use `b3bridge_applyForceAt` to apply
    *  at a world point (this generates torque too, per b3Body_ApplyForce). */
   b3bridge_applyForce(bodyHandle: number, fx: number, fy: number, fz: number): void;
@@ -104,12 +126,18 @@ export interface Box3DExports {
     enableConeLimit: number, coneAngle: number,
     enableTwistLimit: number, lowerTwistAngle: number, upperTwistAngle: number,
     springHertz: number, springDampingRatio: number,
+    /** v0.5: joint motor. `enableMotor` 0/1; `motorVx/vy/vz` is the desired
+     *  motor angular velocity (rad/s); `maxMotorTorque` clamps drive torque. */
+    enableMotor: number, motorVx: number, motorVy: number, motorVz: number, maxMotorTorque: number,
   ): number;
   b3bridge_create_revolute_joint(
     worldHandle: number, bodyHandleA: number, bodyHandleB: number,
     ax: number, ay: number, az: number,
     hx: number, hy: number, hz: number,
     enableLimit: number, lower: number, upper: number,
+    /** v0.5: joint motor. `enableMotor` 0/1; `motorSpeed` rad/s about the hinge
+     *  axis; `maxMotorTorque` clamps drive torque. */
+    enableMotor: number, motorSpeed: number, maxMotorTorque: number,
   ): number;
   b3bridge_create_distance_joint_ex(
     worldHandle: number, bodyHandleA: number, bodyHandleB: number,
@@ -119,7 +147,22 @@ export interface Box3DExports {
     enableSpring: number, hertz: number, dampingRatio: number,
     enableLimit: number,
   ): number;
+  /** v0.5: a joint with no constraint that only disables collision between
+   *  bodyA and bodyB. Destroy via `b3bridge_destroyJoint` like any other joint. */
+  b3bridge_create_filter_joint(
+    worldHandle: number, bodyHandleA: number, bodyHandleB: number,
+  ): number;
   b3bridge_destroyJoint(jointHandle: number): void;
+
+  // --- joint motors (runtime setters, v0.5) ---
+  /** Enable/disable + retune a revolute joint's motor after creation. */
+  b3bridge_set_revolute_motor(
+    jointHandle: number, enableMotor: number, motorSpeed: number, maxMotorTorque: number,
+  ): void;
+  /** Enable/disable + retune a spherical joint's motor after creation. */
+  b3bridge_set_spherical_motor(
+    jointHandle: number, enableMotor: number, vx: number, vy: number, vz: number, maxMotorTorque: number,
+  ): void;
 
   // --- queries ---
   /** Writes 5 floats to `outHit`: [hit(0/1), bodyHandle, px, py, pz]. */
@@ -148,9 +191,8 @@ export interface Box3DExports {
   b3bridge_isBodyAwake(bodyHandle: number): number;
 
   // --- world tuning ---
-  /** Full gravity vector (x,y,z) — supersedes the Y-only gravity passed to
-   *  `b3bridge_create_world` for worlds that need to change gravity post-create
-   *  or use a non-vertical gravity vector. */
+  /** Change the world's full gravity vector (x,y,z)
+   *  at runtime. */
   b3bridge_setGravity(worldHandle: number, x: number, y: number, z: number): void;
 
   // --- per-shape material (addressed by ShapeHandle, returned from add*Shape) ---

@@ -42,6 +42,12 @@ export interface BodyOptions {
   rotation?: Quat; // (x,y,z,w), default [0,0,0,1]
   /** Continuous collision (bullet) for this body. Default false. */
   ccd?: boolean;
+  /** Linear velocity decay. Default 0. */
+  linearDamping?: number;
+  /** Angular velocity decay. Default 0. */
+  angularDamping?: number;
+  /** Multiplier applied to world gravity. Default 1. */
+  gravityScale?: number;
 }
 
 /** Per-shape material. All optional; defaults match box3d/app conventions. */
@@ -49,6 +55,17 @@ export interface ShapeMaterial {
   density?: number; // default 1
   friction?: number; // default 0.6
   restitution?: number; // default 0
+  /** Resistance to rolling for spheres and capsules. Default 0. */
+  rollingResistance?: number;
+}
+
+/** Solver-integrated joint motor (v0.5). `velocity` is the desired motor
+ *  angular velocity (rad/s, world-ish joint-frame vector); `maxTorque` (N·m,
+ *  non-negative) clamps how hard the motor may drive toward it — the solver
+ *  respects this every substep, unlike an externally-applied torque impulse. */
+export interface SphericalJointMotor {
+  velocity: Vec3;
+  maxTorque: number;
 }
 
 export interface SphericalJointOptions {
@@ -56,12 +73,24 @@ export interface SphericalJointOptions {
   coneLimit?: number; // radians; omit = unlimited
   twistLimit?: readonly [lower: number, upper: number]; // radians; omit = unlimited
   spring?: { hertz: number; dampingRatio?: number }; // dampingRatio default 0.7
+  /** Solver-integrated motor (v0.5). Omit for no motor. */
+  motor?: SphericalJointMotor;
+}
+
+/** Solver-integrated joint motor (v0.5). `speed` is the desired motor angular
+ *  speed (rad/s) about the hinge axis; `maxTorque` (N·m, non-negative) clamps
+ *  drive torque — enforced by the solver every substep. */
+export interface RevoluteJointMotor {
+  speed: number;
+  maxTorque: number;
 }
 
 export interface RevoluteJointOptions {
   anchor?: Vec3; // world anchor
   axis?: Vec3; // world hinge axis, default +Z
   limit?: readonly [lower: number, upper: number]; // radians; omit = free spin
+  /** Solver-integrated motor (v0.5). Omit for no motor. */
+  motor?: RevoluteJointMotor;
 }
 
 export interface DistanceJointOptions {
@@ -115,6 +144,17 @@ export interface Capabilities {
   setGravity: boolean;
   /** Per-shape setFriction/setRestitution — bridge round 2. */
   shapeMaterial: boolean;
+  /** Local-space diagonal rotational-inertia telemetry. */
+  bodyInertia: boolean;
+  /** Override local-space diagonal rotational inertia while preserving mass/center. */
+  setBodyInertia: boolean;
+  /** Solver-integrated joint motors (revolute + spherical) — creation-time
+   *  `motor` option and the runtime `setRevoluteMotor`/`setSphericalMotor`
+   *  setters. v0.5 addendum. */
+  jointMotors: boolean;
+  /** `World.createFilterJoint` — a joint with no constraint that only disables
+   *  collision between two bodies. v0.5 addendum. */
+  filterJoint: boolean;
   /** Open-ended probe for features added after these typings were published. */
   has(feature: string): boolean;
 }

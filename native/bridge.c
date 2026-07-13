@@ -141,6 +141,16 @@ static b3ShapeId Bridge_GetShape( int handle )
 	return g_shapes[handle - 1].id;
 }
 
+static b3JointId Bridge_GetJoint( int handle )
+{
+	if ( handle <= 0 || handle > B3BRIDGE_MAX_JOINTS || g_joints[handle - 1].active == false )
+	{
+		return b3_nullJointId;
+	}
+
+	return g_joints[handle - 1].id;
+}
+
 static bool Bridge_SameBodyId( b3BodyId a, b3BodyId b )
 {
 	return a.index1 == b.index1 && a.world0 == b.world0 && a.generation == b.generation;
@@ -179,12 +189,13 @@ static int Bridge_BodyHandleFromShape( b3ShapeId shapeId )
 	return Bridge_FindBodyHandle( b3Shape_GetBody( shapeId ) );
 }
 
-static b3ShapeDef Bridge_MakeShapeDef( float density, float friction, float restitution )
+static b3ShapeDef Bridge_MakeShapeDef( float density, float friction, float restitution, float rollingResistance )
 {
 	b3ShapeDef def = b3DefaultShapeDef();
 	def.density = density;
 	def.baseMaterial.friction = friction;
 	def.baseMaterial.restitution = restitution;
+	def.baseMaterial.rollingResistance = rollingResistance;
 	def.enableContactEvents = true;
 	def.enableHitEvents = true;
 	// box3d only emits a sensor begin/end event when the VISITOR shape also has
@@ -226,12 +237,12 @@ static float Bridge_FindApproachSpeed( b3ContactEvents events, b3ShapeId shapeId
 	return 0.0f;
 }
 
-int b3bridge_create_world( float gravityY )
+int b3bridge_create_world( float gravityX, float gravityY, float gravityZ, int enableSleep, int enableContinuous )
 {
 	b3WorldDef def = b3DefaultWorldDef();
-	def.gravity = (b3Vec3){ 0.0f, gravityY, 0.0f };
-	def.enableSleep = true;
-	def.enableContinuous = true;
+	def.gravity = (b3Vec3){ gravityX, gravityY, gravityZ };
+	def.enableSleep = enableSleep != 0;
+	def.enableContinuous = enableContinuous != 0;
 	def.workerCount = 1;
 
 	b3WorldId worldId = b3CreateWorld( &def );
@@ -291,7 +302,7 @@ void b3bridge_step( int worldHandle, float dt, int substeps )
 }
 
 int b3bridge_create_body( int worldHandle, int type, float x, float y, float z, float qx, float qy, float qz, float qw,
-						  int ccd )
+						  int ccd, float linearDamping, float angularDamping, float gravityScale )
 {
 	b3WorldId worldId = Bridge_GetWorld( worldHandle );
 	if ( B3_IS_NULL( worldId ) )
@@ -309,6 +320,9 @@ int b3bridge_create_body( int worldHandle, int type, float x, float y, float z, 
 	def.position = (b3Pos){ x, y, z };
 	def.rotation = (b3Quat){ { qx, qy, qz }, qw };
 	def.isBullet = ccd != 0;
+	def.linearDamping = linearDamping >= 0.0f && isfinite( linearDamping ) ? linearDamping : 0.0f;
+	def.angularDamping = angularDamping >= 0.0f && isfinite( angularDamping ) ? angularDamping : 0.0f;
+	def.gravityScale = isfinite( gravityScale ) ? gravityScale : 1.0f;
 
 	b3BodyId bodyId = b3CreateBody( worldId, &def );
 	if ( B3_IS_NULL( bodyId ) )
@@ -339,7 +353,8 @@ void b3bridge_destroy_body( int bodyHandle )
 	}
 }
 
-int b3bridge_add_box_shape( int bodyHandle, float hx, float hy, float hz, float density, float friction, float restitution )
+int b3bridge_add_box_shape( int bodyHandle, float hx, float hy, float hz, float density, float friction, float restitution,
+							float rollingResistance )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
 	if ( B3_IS_NULL( bodyId ) )
@@ -347,13 +362,14 @@ int b3bridge_add_box_shape( int bodyHandle, float hx, float hy, float hz, float 
 		return 0;
 	}
 
-	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution );
+	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3BoxHull box = b3MakeBoxHull( hx, hy, hz );
 	b3ShapeId shapeId = b3CreateHullShape( bodyId, &shapeDef, &box.base );
 	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
 }
 
-int b3bridge_add_sphere_shape( int bodyHandle, float radius, float density, float friction, float restitution )
+int b3bridge_add_sphere_shape( int bodyHandle, float radius, float density, float friction, float restitution,
+							   float rollingResistance )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
 	if ( B3_IS_NULL( bodyId ) )
@@ -361,13 +377,14 @@ int b3bridge_add_sphere_shape( int bodyHandle, float radius, float density, floa
 		return 0;
 	}
 
-	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution );
+	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3Sphere sphere = { b3Vec3_zero, radius };
 	b3ShapeId shapeId = b3CreateSphereShape( bodyId, &shapeDef, &sphere );
 	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
 }
 
-int b3bridge_add_capsule_shape( int bodyHandle, float radius, float halfHeight, float density, float friction, float restitution )
+int b3bridge_add_capsule_shape( int bodyHandle, float radius, float halfHeight, float density, float friction, float restitution,
+								float rollingResistance )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
 	if ( B3_IS_NULL( bodyId ) )
@@ -375,7 +392,7 @@ int b3bridge_add_capsule_shape( int bodyHandle, float radius, float halfHeight, 
 		return 0;
 	}
 
-	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution );
+	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3Capsule capsule = { { 0.0f, -halfHeight, 0.0f }, { 0.0f, halfHeight, 0.0f }, radius };
 	b3ShapeId shapeId = b3CreateCapsuleShape( bodyId, &shapeDef, &capsule );
 	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
@@ -410,6 +427,17 @@ void b3bridge_apply_impulse( int bodyHandle, float ix, float iy, float iz, float
 	b3Body_ApplyLinearImpulse( bodyId, (b3Vec3){ ix, iy, iz }, (b3Pos){ px, py, pz }, true );
 }
 
+void b3bridge_applyImpulseToCenter( int bodyHandle, float ix, float iy, float iz )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return;
+	}
+
+	b3Body_ApplyLinearImpulseToCenter( bodyId, (b3Vec3){ ix, iy, iz }, true );
+}
+
 void b3bridge_set_linear_velocity( int bodyHandle, float vx, float vy, float vz )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
@@ -436,7 +464,8 @@ void b3bridge_set_kinematic_target( int bodyHandle, float x, float y, float z, f
 
 int b3bridge_create_spherical_joint( int worldHandle, int bodyHandleA, int bodyHandleB, float ax, float ay, float az,
 									 int enableConeLimit, float coneAngle, int enableTwistLimit, float lowerTwistAngle,
-									 float upperTwistAngle, float springHertz, float springDampingRatio )
+									 float upperTwistAngle, float springHertz, float springDampingRatio,
+									 int enableMotor, float motorVx, float motorVy, float motorVz, float maxMotorTorque )
 {
 	b3WorldId worldId = Bridge_GetWorld( worldHandle );
 	b3BodyId bodyA = Bridge_GetBody( bodyHandleA );
@@ -473,12 +502,20 @@ int b3bridge_create_spherical_joint( int worldHandle, int bodyHandleA, int bodyH
 		def.dampingRatio = springDampingRatio > 0.0f ? springDampingRatio : 0.7f;
 	}
 
+	if ( enableMotor )
+	{
+		def.enableMotor = true;
+		def.motorVelocity = (b3Vec3){ motorVx, motorVy, motorVz };
+		def.maxMotorTorque = maxMotorTorque > 0.0f ? maxMotorTorque : 0.0f;
+	}
+
 	b3JointId jointId = b3CreateSphericalJoint( worldId, &def );
 	return Bridge_AllocJoint( worldHandle, jointId );
 }
 
 int b3bridge_create_revolute_joint( int worldHandle, int bodyHandleA, int bodyHandleB, float ax, float ay, float az,
-									float hx, float hy, float hz, int enableLimit, float lower, float upper )
+									float hx, float hy, float hz, int enableLimit, float lower, float upper,
+									int enableMotor, float motorSpeed, float maxMotorTorque )
 {
 	b3WorldId worldId = Bridge_GetWorld( worldHandle );
 	b3BodyId bodyA = Bridge_GetBody( bodyHandleA );
@@ -508,8 +545,73 @@ int b3bridge_create_revolute_joint( int worldHandle, int bodyHandleA, int bodyHa
 		def.upperAngle = upper;
 	}
 
+	if ( enableMotor )
+	{
+		def.enableMotor = true;
+		def.motorSpeed = motorSpeed;
+		def.maxMotorTorque = maxMotorTorque > 0.0f ? maxMotorTorque : 0.0f;
+	}
+
 	b3JointId jointId = b3CreateRevoluteJoint( worldId, &def );
 	return Bridge_AllocJoint( worldHandle, jointId );
+}
+
+int b3bridge_create_filter_joint( int worldHandle, int bodyHandleA, int bodyHandleB )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	b3BodyId bodyA = Bridge_GetBody( bodyHandleA );
+	b3BodyId bodyB = Bridge_GetBody( bodyHandleB );
+	if ( B3_IS_NULL( worldId ) || B3_IS_NULL( bodyA ) || B3_IS_NULL( bodyB ) )
+	{
+		return 0;
+	}
+
+	b3FilterJointDef def = b3DefaultFilterJointDef();
+	def.base.bodyIdA = bodyA;
+	def.base.bodyIdB = bodyB;
+
+	b3JointId jointId = b3CreateFilterJoint( worldId, &def );
+	return Bridge_AllocJoint( worldHandle, jointId );
+}
+
+void b3bridge_set_revolute_motor( int jointHandle, int enableMotor, float motorSpeed, float maxMotorTorque )
+{
+	b3JointId jointId = Bridge_GetJoint( jointHandle );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return;
+	}
+
+	// Match the applyForce/applyImpulse convention ("wakes the body"): a sleeping
+	// island is never stepped, so flipping the motor on without waking it would
+	// silently do nothing until something else wakes the island.
+	if ( enableMotor )
+	{
+		b3Joint_WakeBodies( jointId );
+	}
+
+	b3RevoluteJoint_EnableMotor( jointId, enableMotor != 0 );
+	b3RevoluteJoint_SetMotorSpeed( jointId, motorSpeed );
+	b3RevoluteJoint_SetMaxMotorTorque( jointId, maxMotorTorque > 0.0f ? maxMotorTorque : 0.0f );
+}
+
+void b3bridge_set_spherical_motor( int jointHandle, int enableMotor, float vx, float vy, float vz, float maxMotorTorque )
+{
+	b3JointId jointId = Bridge_GetJoint( jointHandle );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return;
+	}
+
+	// See b3bridge_set_revolute_motor: wake on enable, mirroring applyForce/applyImpulse.
+	if ( enableMotor )
+	{
+		b3Joint_WakeBodies( jointId );
+	}
+
+	b3SphericalJoint_EnableMotor( jointId, enableMotor != 0 );
+	b3SphericalJoint_SetMotorVelocity( jointId, (b3Vec3){ vx, vy, vz } );
+	b3SphericalJoint_SetMaxMotorTorque( jointId, maxMotorTorque > 0.0f ? maxMotorTorque : 0.0f );
 }
 
 int b3bridge_create_distance_joint_ex( int worldHandle, int bodyHandleA, int bodyHandleB, float anchorAx, float anchorAy,
@@ -738,16 +840,6 @@ int b3bridge_drain_sensor_events( int worldHandle, float* outEvents, int capacit
 	return events.beginCount;
 }
 
-static b3JointId Bridge_GetJoint( int handle )
-{
-	if ( handle <= 0 || handle > B3BRIDGE_MAX_JOINTS || g_joints[handle - 1].active == false )
-	{
-		return b3_nullJointId;
-	}
-
-	return g_joints[handle - 1].id;
-}
-
 void b3bridge_destroyJoint( int jointHandle )
 {
 	b3JointId jointId = Bridge_GetJoint( jointHandle );
@@ -792,6 +884,105 @@ void b3bridge_getAngularVelocity( int bodyHandle, float* outVelocity )
 	outVelocity[0] = v.x;
 	outVelocity[1] = v.y;
 	outVelocity[2] = v.z;
+}
+
+void b3bridge_setLinearDamping( int bodyHandle, float damping )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) || isfinite( damping ) == false || damping < 0.0f )
+	{
+		return;
+	}
+
+	b3Body_SetLinearDamping( bodyId, damping );
+}
+
+float b3bridge_getLinearDamping( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	return B3_IS_NULL( bodyId ) ? 0.0f : b3Body_GetLinearDamping( bodyId );
+}
+
+void b3bridge_setAngularDamping( int bodyHandle, float damping )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) || isfinite( damping ) == false || damping < 0.0f )
+	{
+		return;
+	}
+
+	b3Body_SetAngularDamping( bodyId, damping );
+}
+
+float b3bridge_getAngularDamping( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	return B3_IS_NULL( bodyId ) ? 0.0f : b3Body_GetAngularDamping( bodyId );
+}
+
+void b3bridge_setGravityScale( int bodyHandle, float scale )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) || isfinite( scale ) == false )
+	{
+		return;
+	}
+
+	b3Body_SetGravityScale( bodyId, scale );
+}
+
+float b3bridge_getGravityScale( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	return B3_IS_NULL( bodyId ) ? 0.0f : b3Body_GetGravityScale( bodyId );
+}
+
+float b3bridge_getBodyMass( int bodyHandle )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	return B3_IS_NULL( bodyId ) ? 0.0f : b3Body_GetMass( bodyId );
+}
+
+void b3bridge_getBodyInertia( int bodyHandle, float* outInertia )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		outInertia[0] = 0.0f;
+		outInertia[1] = 0.0f;
+		outInertia[2] = 0.0f;
+		return;
+	}
+
+	b3Matrix3 inertia = b3Body_GetLocalRotationalInertia( bodyId );
+	outInertia[0] = inertia.cx.x;
+	outInertia[1] = inertia.cy.y;
+	outInertia[2] = inertia.cz.z;
+}
+
+void b3bridge_setBodyInertia( int bodyHandle, float ixx, float iyy, float izz )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) || isfinite( ixx ) == false || isfinite( iyy ) == false || isfinite( izz ) == false ||
+		 ixx <= 0.0f || iyy <= 0.0f || izz <= 0.0f )
+	{
+		return;
+	}
+
+	// Preserve the shape-derived mass and center of mass; only override the
+	// local-space diagonal rotational inertia tensor.
+	b3MassData massData = b3Body_GetMassData( bodyId );
+	massData.inertia = (b3Matrix3){
+		{ ixx, 0.0f, 0.0f },
+		{ 0.0f, iyy, 0.0f },
+		{ 0.0f, 0.0f, izz },
+	};
+	b3Body_SetMassData( bodyId, massData );
+
+	// SetMassData refreshes Box3D's local inverse tensor but not its cached
+	// world-space inverse tensor. Reapply the unchanged transform through the
+	// public API so torques and off-center impulses use the override immediately.
+	b3Body_SetTransform( bodyId, b3Body_GetPosition( bodyId ), b3Body_GetRotation( bodyId ) );
 }
 
 void b3bridge_applyForce( int bodyHandle, float fx, float fy, float fz )

@@ -23,10 +23,12 @@ import type {
   JointHandle,
   Quat,
   RaycastHit,
+  RevoluteJointMotor,
   RevoluteJointOptions,
   SensorEvent,
   ShapeHandle,
   ShapeMaterial,
+  SphericalJointMotor,
   SphericalJointOptions,
   Vec3,
   Vec3Out,
@@ -89,8 +91,23 @@ export interface World {
   setAngularVelocity(body: BodyHandle, w: Vec3): void;
   getAngularVelocity(body: BodyHandle): Vec3Out;
   getAngularVelocity<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
+  setLinearDamping(body: BodyHandle, damping: number): void;
+  getLinearDamping(body: BodyHandle): number;
+  setAngularDamping(body: BodyHandle, damping: number): void;
+  getAngularDamping(body: BodyHandle): number;
+  setGravityScale(body: BodyHandle, scale: number): void;
+  getGravityScale(body: BodyHandle): number;
+  getBodyMass(body: BodyHandle): number;
+  /** Local-space diagonal rotational inertia `(Ixx, Iyy, Izz)`, in kg*m^2. */
+  getBodyInertia(body: BodyHandle): Vec3Out;
+  getBodyInertia<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
+  /** Override the positive local-space diagonal inertia tensor while preserving
+   *  the body's existing mass and center of mass. */
+  setBodyInertia(body: BodyHandle, diagonal: Vec3): void;
 
   applyImpulse(body: BodyHandle, impulse: Vec3, at?: Vec3): void;
+  /** Apply an instantaneous linear impulse through the center of mass. */
+  applyImpulseToCenter(body: BodyHandle, impulse: Vec3): void;
   /** `at` (world point) is honored on builds with `Capabilities.forceAtPoint`
    *  (bridge round 2); older builds apply at the center of mass and ignore `at`. */
   applyForce(body: BodyHandle, force: Vec3, at?: Vec3): void;
@@ -100,7 +117,17 @@ export interface World {
   createSphericalJoint(a: BodyHandle, b: BodyHandle, options?: SphericalJointOptions): JointHandle;
   createRevoluteJoint(a: BodyHandle, b: BodyHandle, options?: RevoluteJointOptions): JointHandle;
   createDistanceJoint(a: BodyHandle, b: BodyHandle, options?: DistanceJointOptions): JointHandle;
+  /** A joint with no constraint that only disables collision between `a` and
+   *  `b` (v0.5 — see `Capabilities.filterJoint`). Destroy via `destroyJoint`. */
+  createFilterJoint(a: BodyHandle, b: BodyHandle): JointHandle;
   destroyJoint(joint: JointHandle): void;
+
+  /** Enable/disable + retune a revolute joint's solver-integrated motor.
+   *  `null` disables (v0.5 — see `Capabilities.jointMotors`). */
+  setRevoluteMotor(joint: JointHandle, opts: RevoluteJointMotor | null): void;
+  /** Enable/disable + retune a spherical joint's solver-integrated motor.
+   *  `null` disables (v0.5 — see `Capabilities.jointMotors`). */
+  setSphericalMotor(joint: JointHandle, opts: SphericalJointMotor | null): void;
 
   castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null;
 
@@ -147,11 +174,13 @@ class Box3DImpl implements Box3D {
 
   private createWorldImpl(options: WorldOptions): WorldImpl {
     this.assertLive();
-    const gravityY = options.gravity ? (options.gravity[1] ?? -9.81) : -9.81;
-    // Note: the current bridge only accepts gravityY; gravity.x/z and the
-    // enableSleep/enableContinuous flags default in the bridge (both true).
+    const [gravityX, gravityY, gravityZ] = options.gravity ?? [0, -9.81, 0];
     const handle = this.mod.exports.b3bridge_create_world(
+      Number.isFinite(gravityX) ? gravityX : 0,
       Number.isFinite(gravityY) ? gravityY : -9.81,
+      Number.isFinite(gravityZ) ? gravityZ : 0,
+      options.enableSleep === false ? 0 : 1,
+      options.enableContinuous === false ? 0 : 1,
     ) as WorldHandle;
     const world = new WorldImpl(this.mod, handle);
     moduleOfWorld.set(world, this.mod);
@@ -230,10 +259,12 @@ export type {
   JointHandle,
   Quat,
   RaycastHit,
+  RevoluteJointMotor,
   RevoluteJointOptions,
   SensorEvent,
   ShapeHandle,
   ShapeMaterial,
+  SphericalJointMotor,
   SphericalJointOptions,
   Vec3,
   Vec3Out,

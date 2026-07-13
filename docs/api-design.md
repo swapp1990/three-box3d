@@ -192,6 +192,9 @@ export interface BodyOptions {
   rotation?: Quat;                 // (x,y,z,w), default [0,0,0,1]
   /** Continuous collision (bullet) for this body. Default false. */
   ccd?: boolean;
+  linearDamping?: number;          // default 0
+  angularDamping?: number;         // default 0
+  gravityScale?: number;           // default 1
 }
 
 /** Per-shape material. All optional; defaults match box3d/app conventions. */
@@ -199,6 +202,7 @@ export interface ShapeMaterial {
   density?: number;     // default 1  (kg/m³-ish; box3d units)
   friction?: number;    // default 0.6
   restitution?: number; // default 0  (bounciness, 0..1)
+  rollingResistance?: number; // default 0; spheres/capsules only
 }
 
 export type Vec3 = readonly [number, number, number];
@@ -225,9 +229,25 @@ getLinearVelocity<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T
 setAngularVelocity(body: BodyHandle, w: Vec3): void;
 getAngularVelocity(body: BodyHandle): Vec3Out;
 getAngularVelocity<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
+setLinearDamping(body: BodyHandle, damping: number): void;
+getLinearDamping(body: BodyHandle): number;
+setAngularDamping(body: BodyHandle, damping: number): void;
+getAngularDamping(body: BodyHandle): number;
+setGravityScale(body: BodyHandle, scale: number): void;
+getGravityScale(body: BodyHandle): number;
+/** Mass derived from attached shape density and geometry, in kilograms. */
+getBodyMass(body: BodyHandle): number;
+/** Local-space diagonal rotational inertia `(Ixx, Iyy, Izz)`, in kg*m^2. */
+getBodyInertia(body: BodyHandle): Vec3Out;
+getBodyInertia<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
+/** Override the positive local diagonal tensor, preserving existing mass and
+ *  center of mass. Throws RangeError for non-finite or non-positive axes. */
+setBodyInertia(body: BodyHandle, diagonal: Vec3): void;
 
 /** Instantaneous impulse (kg·m/s) at world point `at`. Wakes the body. */
 applyImpulse(body: BodyHandle, impulse: Vec3, at?: Vec3): void;
+/** Instantaneous impulse through the body's center of mass. Wakes the body. */
+applyImpulseToCenter(body: BodyHandle, impulse: Vec3): void;
 /** Continuous force (N), consumed at the next step. Wakes the body. */
 applyForce(body: BodyHandle, force: Vec3, at?: Vec3): void;
 /** Continuous torque (N·m), consumed at the next step. */
@@ -354,6 +374,8 @@ export interface Capabilities {
   angularVelocity: boolean;
   forces: boolean;
   setBodyTransform: boolean;
+  bodyInertia: boolean;  // local diagonal rotational-inertia telemetry
+  setBodyInertia: boolean; // local diagonal override; preserves mass/center
   /** Open-ended probe for features added after these typings were published. */
   has(feature: string): boolean;
 }
@@ -652,8 +674,12 @@ The Phase 3 dogfood port follows this table 1:1.
 ## 5. Explicitly out of scope for v0.1 (defer list, matches plan §3 table)
 
 Deferred to **v0.5**:
-- Collision filters / query filters; per-body/per-shape **user data**.
-- More joints: prismatic, weld, motor; runtime **material updates**.
+- ~~Collision filters~~ — **the filter-joint slice shipped, see §7**; per-body/
+  per-shape **user data** and query filters remain deferred.
+- ~~More joints: motor~~ — **revolute + spherical joint motors shipped, see §7**;
+  prismatic and weld joints remain deferred.
+- Runtime **material updates** — shipped early in the v0.1 addendum (§6
+  `setShapeFriction`/`setShapeRestitution`), ahead of this defer note.
 - Allocation-free event streaming as the *recommended default* path (the `…Into`
   variants ship in v0.1, but the object-returning drain stays the documented default
   until v0.5).
@@ -676,7 +702,7 @@ Out of the **core** package entirely (belongs to sibling packages, never in `box
 
 Additive-only surface added after the frozen sign-off above. Existing signatures
 were not changed; all new methods degrade gracefully via `Capabilities` on older
-builds. Ground truth is `native/expected-exports.txt` (37 `b3bridge_*` + malloc/free).
+builds. Ground truth is `native/expected-exports.txt` (47 `b3bridge_*` + malloc/free).
 
 - **Sensor-visitor fix (no new export).** `Bridge_MakeShapeDef` now sets
   `enableSensorEvents = true` on every regular (non-sensor) shape. box3d only
@@ -693,7 +719,7 @@ builds. Ground truth is `native/expected-exports.txt` (37 `b3bridge_*` + malloc/
   `b3Body_GetType` / `b3Body_IsAwake`. Gated by `Capabilities.bodyQueries`.
   `getBodyType` returns `null` for an invalid handle or an older build.
 - **`World.setGravity([x, y, z])`.** Wraps `b3World_SetGravity` (full vector),
-  superseding the Y-only gravity accepted by `createWorld()`. Gated by
+  changing the full gravity vector after world creation. Gated by
   `Capabilities.setGravity`.
 - **`World.setShapeFriction(shape, friction)` / `World.setShapeRestitution(shape, restitution)`.**
   Wrap `b3Shape_SetFriction` / `b3Shape_SetRestitution`, addressed by the
@@ -701,5 +727,75 @@ builds. Ground truth is `native/expected-exports.txt` (37 `b3bridge_*` + malloc/
   `Capabilities.shapeMaterial`. This is the "runtime material updates" item
   from the v0.5 defer list in §5 — pulled forward because the upstream API is a
   trivial 1:1 wrapper.
+- **Body inertia read/write.** `getBodyInertia` reads the local diagonal tensor;
+  `setBodyInertia` replaces it with a positive finite diagonal while retaining
+  the current mass and local center of mass. The write is gated independently by
+  `Capabilities.setBodyInertia` for older WASM builds.
 - **New `Capabilities` fields (add-only):** `forceAtPoint`, `bodyQueries`,
-  `setGravity`, `shapeMaterial`.
+  `setGravity`, `shapeMaterial`, `bodyInertia`, `setBodyInertia`.
+
+## 7. v0.5 addendum (joint motors + filter joint)
+
+Additive-only surface, pulled forward from the v0.5 defer list in §5 ahead of a
+full v0.5 cut: **solver-integrated joint motors** for the revolute and spherical
+joints, and a **filter joint** for disabling collision between two arbitrary
+bodies with no constraint. Existing v0.1 signatures are unchanged in spirit —
+every joint-creation export grew new *trailing* parameters, so old call sites
+that already pass every existing argument still compile; only callers using a
+raw positional call through `Box3DExports` (not the `World` API) need to add
+the new trailing args. Everything degrades gracefully via `Capabilities` on
+older builds. Ground truth is `native/expected-exports.txt` (50 `b3bridge_*` +
+malloc/free = 52).
+
+Why this matters: an externally-applied torque impulse (`applyTorque`) is a
+single one-shot kick each frame that the *caller* must recompute and reapply
+every step, with no notion of a target speed or a torque budget — it's easy to
+over- or under-drive, and nothing stops it from injecting unbounded energy. A
+**solver-integrated motor** instead declares intent ("drive toward this speed,
+using at most this much torque") once, and the constraint solver enforces the
+torque clamp every substep while continuously correcting toward the target —
+the textbook building block for an active ragdoll's joint drives.
+
+- **`RevoluteJointOptions.motor?: { speed: number; maxTorque: number }`.**
+  `speed` (rad/s) is the target angular speed about the hinge axis; `maxTorque`
+  (N·m, clamped to ≥ 0) is the solver's per-substep torque budget while driving
+  toward it. Omit for no motor (matches the v0.1 default — free spin or a
+  passive limit, never a spurious drive).
+- **`SphericalJointOptions.motor?: { velocity: Vec3; maxTorque: number }`.**
+  `velocity` (rad/s) is the target angular velocity vector; `maxTorque` is the
+  shared torque budget across all three axes. Omit for no motor.
+- **`World.setRevoluteMotor(joint, opts | null)` / `World.setSphericalMotor(joint, opts | null)`.**
+  Enable, retune, or disable (`null`) a joint's motor after creation — e.g. an
+  active ragdoll continuously re-targeting its joint drives every frame from a
+  controller, without recreating the joint. **Wakes the joint's bodies when
+  enabling** (mirrors the documented "wakes the body" convention on
+  `applyForce`/`applyImpulse` — a sleeping island is never stepped, so a motor
+  enabled on a settled joint would otherwise silently do nothing until
+  something else woke it). Disabling does not force a wake.
+- **`World.createFilterJoint(a, b): JointHandle`.** A joint with **no
+  constraint** — it only disables collision between `a` and `b` for as long as
+  it exists (wraps `b3CreateFilterJoint`/`b3FilterJointDef`, which is exactly
+  how box3d already implements `collideConnected` for every other joint type;
+  this just exposes the bare mechanism with nothing else attached). Destroy via
+  the existing `destroyJoint` to restore collision between the pair — no new
+  destroy path. **Gotcha (native behavior, not a bridge bug):** the broad phase
+  only re-evaluates a shape pair's collision filter while at least one of the
+  two bodies is moving enough to re-trigger a broad-phase "moved proxy" check
+  (`native/box3d/src/broad_phase.c`); two bodies at *rest* (zero velocity, e.g.
+  settled to sleep) will not spontaneously re-discover each other after
+  `destroyJoint` — nudge/wake them (a falling pair under gravity, or any body
+  with nonzero velocity, re-triggers on the very next step with no extra call
+  needed).
+- **Runtime motor setters wrap already-shipped native API, not new engine
+  code.** `b3RevoluteJoint_EnableMotor`/`SetMotorSpeed`/`SetMaxMotorTorque` and
+  `b3SphericalJoint_EnableMotor`/`SetMotorVelocity`/`SetMaxMotorTorque` (and
+  `b3CreateFilterJoint`/`b3DefaultFilterJointDef`) were already present in
+  `native/box3d/include/box3d/box3d.h`; this addendum is the bridge + TS
+  plumbing to reach them, not new physics.
+- **New bridge exports:** `b3bridge_create_filter_joint`,
+  `b3bridge_set_revolute_motor`, `b3bridge_set_spherical_motor`. The existing
+  `b3bridge_create_revolute_joint` / `b3bridge_create_spherical_joint` exports
+  grew trailing motor parameters (same export name, longer signature — see the
+  compatibility note above).
+- **New `Capabilities` fields (add-only):** `jointMotors` (creation-time
+  `motor` option + both runtime setters), `filterJoint` (`createFilterJoint`).

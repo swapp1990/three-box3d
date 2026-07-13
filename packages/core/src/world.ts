@@ -25,10 +25,12 @@ import {
   type JointHandle,
   type Quat,
   type RaycastHit,
+  type RevoluteJointMotor,
   type RevoluteJointOptions,
   type SensorEvent,
   type ShapeHandle,
   type ShapeMaterial,
+  type SphericalJointMotor,
   type SphericalJointOptions,
   type Vec3,
   type Vec3Out,
@@ -104,8 +106,7 @@ export class WorldImpl {
     this.pullEvents();
   }
 
-  /** Set the full gravity vector (x,y,z), superseding the Y-only gravity given
-   *  at `createWorld()` time. Bridge round 2. */
+  /** Change the world's full gravity vector (x,y,z) at runtime. */
   setGravity(gravity: Vec3): void {
     this.assertLive();
     const [x, y, z] = gravity;
@@ -154,7 +155,15 @@ export class WorldImpl {
 
   createBody(options: BodyOptions = {}): BodyHandle {
     this.assertLive();
-    const { type = 'dynamic', position, rotation, ccd = false } = options;
+    const {
+      type = 'dynamic',
+      position,
+      rotation,
+      ccd = false,
+      linearDamping = 0,
+      angularDamping = 0,
+      gravityScale = 1,
+    } = options;
     const [x, y, z] = position ?? [0, 0, 0];
     const [qx, qy, qz, qw] = rotation ?? [0, 0, 0, 1];
     const typeInt = BODY_TYPE_TO_INT[type] ?? BODY_TYPE_TO_INT.dynamic;
@@ -169,6 +178,9 @@ export class WorldImpl {
       finiteOr(qz, 0),
       finiteOr(qw, 1),
       boolInt(ccd),
+      Math.max(0, finiteOr(linearDamping, 0)),
+      Math.max(0, finiteOr(angularDamping, 0)),
+      finiteOr(gravityScale, 1),
     ) as BodyHandle;
   }
 
@@ -217,7 +229,7 @@ export class WorldImpl {
 
   addBox(body: BodyHandle, half: Vec3, material: ShapeMaterial = {}): ShapeHandle {
     this.assertLive();
-    const { density = 1, friction = 0.6, restitution = 0 } = material;
+    const { density = 1, friction = 0.6, restitution = 0, rollingResistance = 0 } = material;
     const [hx, hy, hz] = half;
     return this.mod.exports.b3bridge_add_box_shape(
       body,
@@ -227,18 +239,20 @@ export class WorldImpl {
       finiteOr(density, 1),
       finiteOr(friction, 0.6),
       finiteOr(restitution, 0),
+      Math.max(0, finiteOr(rollingResistance, 0)),
     ) as ShapeHandle;
   }
 
   addSphere(body: BodyHandle, radius: number, material: ShapeMaterial = {}): ShapeHandle {
     this.assertLive();
-    const { density = 1, friction = 0.6, restitution = 0 } = material;
+    const { density = 1, friction = 0.6, restitution = 0, rollingResistance = 0 } = material;
     return this.mod.exports.b3bridge_add_sphere_shape(
       body,
       finiteOr(radius, 0.5),
       finiteOr(density, 1),
       finiteOr(friction, 0.6),
       finiteOr(restitution, 0),
+      Math.max(0, finiteOr(rollingResistance, 0)),
     ) as ShapeHandle;
   }
 
@@ -249,7 +263,7 @@ export class WorldImpl {
     material: ShapeMaterial = {},
   ): ShapeHandle {
     this.assertLive();
-    const { density = 1, friction = 0.6, restitution = 0 } = material;
+    const { density = 1, friction = 0.6, restitution = 0, rollingResistance = 0 } = material;
     return this.mod.exports.b3bridge_add_capsule_shape(
       body,
       finiteOr(radius, 0.2),
@@ -257,6 +271,7 @@ export class WorldImpl {
       finiteOr(density, 1),
       finiteOr(friction, 0.6),
       finiteOr(restitution, 0),
+      Math.max(0, finiteOr(rollingResistance, 0)),
     ) as ShapeHandle;
   }
 
@@ -319,6 +334,62 @@ export class WorldImpl {
     return this.readVec3(this.mod.exports.b3bridge_getAngularVelocity, body, out);
   }
 
+  setLinearDamping(body: BodyHandle, damping: number): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_setLinearDamping(body, Math.max(0, finiteOr(damping, 0)));
+  }
+
+  getLinearDamping(body: BodyHandle): number {
+    this.assertLive();
+    return this.mod.exports.b3bridge_getLinearDamping(body);
+  }
+
+  setAngularDamping(body: BodyHandle, damping: number): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_setAngularDamping(body, Math.max(0, finiteOr(damping, 0)));
+  }
+
+  getAngularDamping(body: BodyHandle): number {
+    this.assertLive();
+    return this.mod.exports.b3bridge_getAngularDamping(body);
+  }
+
+  setGravityScale(body: BodyHandle, scale: number): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_setGravityScale(body, finiteOr(scale, 1));
+  }
+
+  getGravityScale(body: BodyHandle): number {
+    this.assertLive();
+    return this.mod.exports.b3bridge_getGravityScale(body);
+  }
+
+  getBodyMass(body: BodyHandle): number {
+    this.assertLive();
+    return this.mod.exports.b3bridge_getBodyMass(body);
+  }
+
+  getBodyInertia(body: BodyHandle): Vec3Out;
+  getBodyInertia<T extends Vec3Out | Float32Array>(body: BodyHandle, out: T): T;
+  getBodyInertia(
+    body: BodyHandle,
+    out?: Vec3Out | Float32Array,
+  ): Vec3Out | Float32Array {
+    this.assertLive();
+    return this.readVec3(this.mod.exports.b3bridge_getBodyInertia, body, out);
+  }
+
+  setBodyInertia(body: BodyHandle, diagonal: Vec3): void {
+    this.assertLive();
+    const [ixx, iyy, izz] = diagonal;
+    if (![ixx, iyy, izz].every((value) => Number.isFinite(value) && value > 0)) {
+      throw new RangeError(
+        'box3d-web: body inertia diagonal values must be finite and greater than zero.',
+      );
+    }
+    this.mod.exports.b3bridge_setBodyInertia(body, ixx, iyy, izz);
+  }
+
   private readVec3(
     fn: (bodyHandle: number, outPtr: Ptr) => void,
     body: BodyHandle,
@@ -333,7 +404,7 @@ export class WorldImpl {
     const z = heap[i + 2];
     if (out instanceof Float32Array) {
       if (out.length < 3) {
-        throw new RangeError('box3d-web: getLinear/AngularVelocity Float32Array out must have length ≥ 3.');
+        throw new RangeError('box3d-web: Vec3 Float32Array out must have length ≥ 3.');
       }
       out[0] = x;
       out[1] = y;
@@ -361,6 +432,16 @@ export class WorldImpl {
       finiteOr(px, 0),
       finiteOr(py, 0),
       finiteOr(pz, 0),
+    );
+  }
+
+  applyImpulseToCenter(body: BodyHandle, impulse: Vec3): void {
+    this.assertLive();
+    this.mod.exports.b3bridge_applyImpulseToCenter(
+      body,
+      finiteOr(impulse[0], 0),
+      finiteOr(impulse[1], 0),
+      finiteOr(impulse[2], 0),
     );
   }
 
@@ -436,6 +517,8 @@ export class WorldImpl {
     const springDamping = options.spring
       ? finiteOr(options.spring.dampingRatio ?? 0.7, 0.7)
       : 0.7;
+    const motor = options.motor;
+    const [mvx, mvy, mvz] = motor?.velocity ?? [0, 0, 0];
     return this.mod.exports.b3bridge_create_spherical_joint(
       this.handle,
       a,
@@ -450,6 +533,11 @@ export class WorldImpl {
       hasTwist ? (options.twistLimit as readonly number[])[1] : 0,
       springHertz,
       springDamping,
+      boolInt(motor != null),
+      finiteOr(mvx, 0),
+      finiteOr(mvy, 0),
+      finiteOr(mvz, 0),
+      motor ? Math.max(0, finiteOr(motor.maxTorque, 0)) : 0,
     ) as JointHandle;
   }
 
@@ -465,6 +553,7 @@ export class WorldImpl {
       options.limit != null &&
       Number.isFinite(options.limit[0]) &&
       Number.isFinite(options.limit[1]);
+    const motor = options.motor;
     return this.mod.exports.b3bridge_create_revolute_joint(
       this.handle,
       a,
@@ -478,6 +567,9 @@ export class WorldImpl {
       boolInt(hasLimit),
       hasLimit ? (options.limit as readonly number[])[0] : 0,
       hasLimit ? (options.limit as readonly number[])[1] : 0,
+      boolInt(motor != null),
+      motor ? finiteOr(motor.speed, 0) : 0,
+      motor ? Math.max(0, finiteOr(motor.maxTorque, 0)) : 0,
     ) as JointHandle;
   }
 
@@ -515,6 +607,59 @@ export class WorldImpl {
   destroyJoint(joint: JointHandle): void {
     this.assertLive();
     this.mod.exports.b3bridge_destroyJoint(joint);
+  }
+
+  /**
+   * A joint with no constraint that only disables collision between `a` and
+   * `b` (v0.5 — see `Capabilities.filterJoint`). Destroy via `destroyJoint`
+   * like any other joint to restore collision between the pair.
+   */
+  createFilterJoint(a: BodyHandle, b: BodyHandle): JointHandle {
+    this.assertLive();
+    return this.mod.exports.b3bridge_create_filter_joint(this.handle, a, b) as JointHandle;
+  }
+
+  /**
+   * Enable/disable and retune a revolute joint's solver-integrated motor after
+   * creation (v0.5 — see `Capabilities.jointMotors`). Pass `null` to disable.
+   * Unlike an externally-applied torque impulse, the solver enforces
+   * `maxTorque` every substep while driving toward `speed`.
+   */
+  setRevoluteMotor(joint: JointHandle, opts: RevoluteJointMotor | null): void {
+    this.assertLive();
+    if (opts == null) {
+      this.mod.exports.b3bridge_set_revolute_motor(joint, 0, 0, 0);
+      return;
+    }
+    this.mod.exports.b3bridge_set_revolute_motor(
+      joint,
+      1,
+      finiteOr(opts.speed, 0),
+      Math.max(0, finiteOr(opts.maxTorque, 0)),
+    );
+  }
+
+  /**
+   * Enable/disable and retune a spherical joint's solver-integrated motor
+   * after creation (v0.5 — see `Capabilities.jointMotors`). Pass `null` to
+   * disable. Unlike an externally-applied torque impulse, the solver enforces
+   * `maxTorque` every substep while driving toward `velocity`.
+   */
+  setSphericalMotor(joint: JointHandle, opts: SphericalJointMotor | null): void {
+    this.assertLive();
+    if (opts == null) {
+      this.mod.exports.b3bridge_set_spherical_motor(joint, 0, 0, 0, 0, 0);
+      return;
+    }
+    const [vx, vy, vz] = opts.velocity;
+    this.mod.exports.b3bridge_set_spherical_motor(
+      joint,
+      1,
+      finiteOr(vx, 0),
+      finiteOr(vy, 0),
+      finiteOr(vz, 0),
+      Math.max(0, finiteOr(opts.maxTorque, 0)),
+    );
   }
 
   // --- queries ---
