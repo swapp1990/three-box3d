@@ -39,6 +39,64 @@ describe('FixedStepper', () => {
     expect(s.simTime).toBe(0);
     expect(s.advance(0.005, () => {})).toBe(0);
   });
+
+  it('setMaxStepsPerFrame can switch 3→1→3 mid-stream and only changes the budget', () => {
+    const fixedDt = 1 / 60;
+    const s = new FixedStepper({ fixedDt, maxStepsPerFrame: 3, maxDeltaClamp: 0.1 });
+    const times: number[] = [];
+
+    // Three fixed steps available in one large frame → budget 3 runs all three.
+    expect(s.advance(3 * fixedDt + 0.001, () => times.push(s.simTime + fixedDt))).toBe(3);
+    expect(times).toHaveLength(3);
+    const afterThree = s.simTime;
+    expect(afterThree).toBeCloseTo(3 * fixedDt, 6);
+
+    // Mid-stream overload budget: still enough backlog for multiple steps, but cap is 1.
+    s.setMaxStepsPerFrame(1);
+    expect(s.simTime).toBe(afterThree); // must not reset clocks
+    expect(s.advance(3 * fixedDt, () => {})).toBe(1);
+    expect(s.simTime).toBeCloseTo(afterThree + fixedDt, 6);
+
+    // Restore catch-up budget to 3; simTime stays monotone.
+    s.setMaxStepsPerFrame(3);
+    const beforeRestore = s.simTime;
+    expect(s.advance(3 * fixedDt, () => {})).toBe(3);
+    expect(s.simTime).toBeCloseTo(beforeRestore + 3 * fixedDt, 6);
+    expect(s.simTime).toBeGreaterThan(beforeRestore);
+  });
+
+  it('setMaxStepsPerFrame caps actual steps and leaves leftover time for death-spiral drop', () => {
+    const fixedDt = 1 / 60;
+    const s = new FixedStepper({ fixedDt, maxStepsPerFrame: 3, maxDeltaClamp: 0.1 });
+    s.setMaxStepsPerFrame(1);
+    let count = 0;
+    // 0.1s clamp + banked accumulator could want many fixed steps; budget 1 wins.
+    expect(s.advance(10, () => count++)).toBe(1);
+    expect(count).toBe(1);
+    expect(s.simTime).toBeCloseTo(fixedDt, 6);
+    // Next frame with tiny delta: leftover after modulo is < fixedDt → 0 steps (monotone clocks).
+    expect(s.advance(0, () => count++)).toBe(0);
+    expect(count).toBe(1);
+    expect(s.simTime).toBeCloseTo(fixedDt, 6);
+  });
+
+  it('setMaxStepsPerFrame rejects invalid budgets and floors valid fractions', () => {
+    const s = new FixedStepper({ maxStepsPerFrame: 3 });
+    s.advance(1 / 60, () => {});
+    const simBefore = s.simTime;
+
+    expect(() => s.setMaxStepsPerFrame(0)).toThrow(RangeError);
+    expect(() => s.setMaxStepsPerFrame(-2)).toThrow(RangeError);
+    expect(() => s.setMaxStepsPerFrame(0.9)).toThrow(RangeError);
+    expect(() => s.setMaxStepsPerFrame(Number.NaN)).toThrow(RangeError);
+    expect(() => s.setMaxStepsPerFrame(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => s.setMaxStepsPerFrame(Number.NEGATIVE_INFINITY)).toThrow(RangeError);
+
+    // Truncate toward zero (constructor parity): 2.9 → 2; clocks untouched by the setter.
+    s.setMaxStepsPerFrame(2.9);
+    expect(s.simTime).toBe(simBefore);
+    expect(s.advance(3 / 60, () => {})).toBe(2);
+  });
 });
 
 describe('TransformBuffer', () => {
