@@ -40,6 +40,8 @@ for (let row = 0; row < 10; row++) {
       position: [col * 1.02 - 3, 0.5 + row * 0.52, 0],
     });
     world.addBox(body, [0.5, 0.25, 0.25], { density: 2, friction: 0.7 });
+    // An irregular fragment would pass its own body-local points to addHull()
+    // instead of using an AABB box proxy; see docs/convex-hull-colliders.md.
     bricks.push(body);
     buffer.add(body);
   }
@@ -84,6 +86,7 @@ Dependency direction is strict: `r3f-box3d` → `three-box3d` → `box3d-web`. T
 ## Docs
 
 - **Getting Started, Concepts, and the Gotchas doc** live in [`docs-site/`](docs-site) — `npm run docs:dev` to serve locally.
+- **Convex hull colliders, from first principles to implementation** are taught in [`docs/convex-hull-colliders.md`](docs/convex-hull-colliders.md), including the `World.addHull()` data flow, ownership model, tests, limitations, research landscape, and future roadmap.
 - The **Gotchas** page is the part you want even if you don't use this library: the InstancedMesh `vertexColors` black-instance trap, the native-explode no-op on sleeping bodies, Suspense isolation for `<Environment>`/`<Text>`, the WASM env-import LinkError, and more — each one paid for in real debugging time.
 - API reference is generated with TypeDoc (`npm run docs:api`).
 

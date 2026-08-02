@@ -16,7 +16,7 @@ in this document. The five open questions were ruled as follows and are settled:
 
 1. **Methods-only.** `World` methods are the sole surface — no free-function
    variants are promised or shipped in v0.1.
-2. **`ShapeHandle` is returned** by `addBox`/`addSphere`/`addCapsule`/`addSensorBox`
+2. **`ShapeHandle` is returned** by `addBox`/`addSphere`/`addCapsule`/`addSensorBox`/`addHull`
    in v0.1, even though per-shape mutation only lands in v0.5.
 3. **`drainContactBeginEventsInto` / `drainSensorEventsInto` SHIP in v0.1** —
    implemented now to prove the shared-queue contract early; the object-returning
@@ -163,6 +163,14 @@ export interface World {
   addCapsule(body: BodyHandle, radius: number, halfHeight: number, material?: ShapeMaterial): ShapeHandle;
   /** Sensor (non-solid) box — fires sensor events, no contact response. */
   addSensorBox(body: BodyHandle, half: Vec3): ShapeHandle;
+  /**
+   * Convex hull from body-local points (`readonly Vec3[]` or packed `Float32Array`
+   * of XYZ triples). Builds **one** convex hull — concavity is not preserved.
+   * Concave meshes must be pre-decomposed (CoACD recommended; V-HACD is archived).
+   * Default `maxVertices` is 64 (demolition-friendly); Box3D hard-caps at 255.
+   * Throws on invalid input or native hull-build failure.
+   */
+  addHull(body: BodyHandle, points: readonly Vec3[] | Float32Array, options?: HullOptions): ShapeHandle;
 
   // velocities / forces / impulses / kinematics — see §2.5
   // joints — see §2.6
@@ -205,9 +213,30 @@ export interface ShapeMaterial {
   rollingResistance?: number; // default 0; spheres/capsules only
 }
 
+/** `addHull` options — material + hull-build vertex budget. */
+export interface HullOptions extends ShapeMaterial {
+  /** Max vertices retained by the native hull builder. Default 64; hard limit 255. */
+  maxVertices?: number;
+}
+
 export type Vec3 = readonly [number, number, number];
 export type Quat = readonly [number, number, number, number]; // (x,y,z,w)
 ```
+
+**Hull semantics (state of the art, reviewed 2026-08-02):** points are body-local.
+The API computes one convex hull from the point cloud and does **not** preserve
+concavity. This follows production engines such as
+[PhysX](https://nvidia-omniverse.github.io/PhysX/physx/5.1.1/docs/Geometry.html)
+and [Jolt](https://jrouwe.github.io/JoltPhysicsDocs/5.3.0/class_convex_hull_shape_settings.html):
+cook a bounded convex point cloud once, keep it local to the body, and use a simpler
+physics hull than the render mesh. A concave mesh must be pre-decomposed into
+multiple convex hulls — [CoACD](https://github.com/SarahWeiii/CoACD) is the current
+recommended path; [V-HACD](https://github.com/kmammou/v-hacd) is archived and points
+users to CoACD. Keep hull vertex counts modest for demolition piles; visual meshes
+remain higher detail than physics hulls. Recent research on
+[convex primitive decomposition](https://arxiv.org/abs/2602.07369) is promising for
+complex authored meshes, but a single exact hull remains the direct solution for
+already-convex Voronoi fracture cells.
 
 `World` body/type methods:
 
@@ -642,6 +671,7 @@ The Phase 3 dogfood port follows this table 1:1.
 | `destroyBody(id)` | `world.destroyBody(body)` | |
 | `addBoxShape(id, {hx,hy,hz,..})` | `world.addBox(body, [hx,hy,hz], material)` | Half-extents as `Vec3`. |
 | `addSphereShape` / `addCapsuleShape` | `world.addSphere` / `world.addCapsule` | |
+| (legacy app bridge had no hull API) | `world.addHull(body, points, options?)` | Body-local convex hull backed by Box3D's native hull builder; default `maxVertices` 64, hard cap 255. |
 | `addSensorBoxShape` | `world.addSensorBox` | |
 | `applyImpulse(id, ix..,px..)` | `world.applyImpulse(body, impulse, at)` | |
 | `setLinearVelocity` | `world.setLinearVelocity(body, v)` | |
