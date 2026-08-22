@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #define B3BRIDGE_MAX_WORLDS 128
 #define B3BRIDGE_MAX_BODIES 8192
@@ -416,6 +417,73 @@ int b3bridge_add_sensor_box_shape( int bodyHandle, float hx, float hy, float hz 
 	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
 }
 
+// Create a dynamic convex hull shape from a packed float XYZ point cloud
+// (pointCount triples of x,y,z). Points are body-local. Copies into temporary
+// b3Vec3 storage so WASM/JS float packing need not match b3Vec3 layout.
+// Temporary hull from b3CreateHull is always destroyed after b3CreateHullShape
+// (which clones/interns the geometry). Returns 0 on any failure — never
+// allocates a bridge ShapeHandle for a null native shape.
+int b3bridge_add_hull_shape( int bodyHandle, const float* points, int pointCount, int maxVertexCount, float density,
+							 float friction, float restitution, float rollingResistance )
+{
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return 0;
+	}
+
+	if ( points == NULL || pointCount < 4 )
+	{
+		return 0;
+	}
+
+	// Box3D hulls are uint8-limited (b3CreateHull clamps max vertices to 4..255).
+	if ( maxVertexCount < 4 || maxVertexCount > 255 )
+	{
+		return 0;
+	}
+
+	b3Vec3* localPoints = (b3Vec3*)malloc( (size_t)pointCount * sizeof( b3Vec3 ) );
+	if ( localPoints == NULL )
+	{
+		return 0;
+	}
+
+	for ( int i = 0; i < pointCount; ++i )
+	{
+		float x = points[i * 3 + 0];
+		float y = points[i * 3 + 1];
+		float z = points[i * 3 + 2];
+		if ( Bridge_IsFiniteFloat( x ) == false || Bridge_IsFiniteFloat( y ) == false || Bridge_IsFiniteFloat( z ) == false )
+		{
+			free( localPoints );
+			return 0;
+		}
+		localPoints[i] = (b3Vec3){ x, y, z };
+	}
+
+	b3HullData* hull = b3CreateHull( localPoints, pointCount, maxVertexCount );
+	// Input copy is no longer needed once the hull builder has run.
+	free( localPoints );
+	if ( hull == NULL )
+	{
+		// Degenerate / coplanar / invalid point cloud — native hull build failed.
+		return 0;
+	}
+
+	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
+	b3ShapeId shapeId = b3CreateHullShape( bodyId, &shapeDef, hull );
+	// b3CreateHullShape clones/interns geometry; always free the temporary hull.
+	b3DestroyHull( hull );
+
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return 0;
+	}
+
+	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+}
+
 void b3bridge_apply_impulse( int bodyHandle, float ix, float iy, float iz, float px, float py, float pz )
 {
 	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
@@ -612,6 +680,42 @@ void b3bridge_set_spherical_motor( int jointHandle, int enableMotor, float vx, f
 	b3SphericalJoint_EnableMotor( jointId, enableMotor != 0 );
 	b3SphericalJoint_SetMotorVelocity( jointId, (b3Vec3){ vx, vy, vz } );
 	b3SphericalJoint_SetMaxMotorTorque( jointId, maxMotorTorque > 0.0f ? maxMotorTorque : 0.0f );
+}
+
+// Current solver motor torque (N*m) after the most recent step. Invalid joint
+// handles return/write zero so telemetry callers can probe without try/catch.
+float b3bridge_get_revolute_motor_torque( int jointHandle )
+{
+	b3JointId jointId = Bridge_GetJoint( jointHandle );
+	if ( B3_IS_NULL( jointId ) || b3Joint_GetType( jointId ) != b3_revoluteJoint )
+	{
+		return 0.0f;
+	}
+
+	return b3RevoluteJoint_GetMotorTorque( jointId );
+}
+
+void b3bridge_get_spherical_motor_torque( int jointHandle, float* outTorque )
+{
+	if ( outTorque == NULL )
+	{
+		return;
+	}
+
+	outTorque[0] = 0.0f;
+	outTorque[1] = 0.0f;
+	outTorque[2] = 0.0f;
+
+	b3JointId jointId = Bridge_GetJoint( jointHandle );
+	if ( B3_IS_NULL( jointId ) || b3Joint_GetType( jointId ) != b3_sphericalJoint )
+	{
+		return;
+	}
+
+	b3Vec3 torque = b3SphericalJoint_GetMotorTorque( jointId );
+	outTorque[0] = torque.x;
+	outTorque[1] = torque.y;
+	outTorque[2] = torque.z;
 }
 
 int b3bridge_create_distance_joint_ex( int worldHandle, int bodyHandleA, int bodyHandleB, float anchorAx, float anchorAy,
@@ -820,6 +924,58 @@ int b3bridge_drain_contact_begin_events( int worldHandle, float* outEvents, int 
 	return events.beginCount;
 }
 
+// Tuple layout: [bodyA, bodyB] per event. A destroyed shape maps to body handle 0
+// (native end events can outlive the shape; see b3ContactEndTouchEvent).
+int b3bridge_drain_contact_end_events( int worldHandle, float* outEvents, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return 0;
+	}
+
+	b3ContactEvents events = b3World_GetContactEvents( worldId );
+	int writeCount = events.endCount < capacity ? events.endCount : capacity;
+	for ( int i = 0; i < writeCount; ++i )
+	{
+		b3ContactEndTouchEvent* event = events.endEvents + i;
+		outEvents[2 * i + 0] = (float)Bridge_BodyHandleFromShape( event->shapeIdA );
+		outEvents[2 * i + 1] = (float)Bridge_BodyHandleFromShape( event->shapeIdB );
+	}
+
+	return events.endCount;
+}
+
+// Tuple layout:
+// [bodyA, bodyB, pointX, pointY, pointZ, normalX, normalY, normalZ, approachSpeed]
+// Normal is the native A→B direction from b3ContactHitEvent.
+int b3bridge_drain_contact_hit_events( int worldHandle, float* outEvents, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return 0;
+	}
+
+	b3ContactEvents events = b3World_GetContactEvents( worldId );
+	int writeCount = events.hitCount < capacity ? events.hitCount : capacity;
+	for ( int i = 0; i < writeCount; ++i )
+	{
+		b3ContactHitEvent* hit = events.hitEvents + i;
+		outEvents[9 * i + 0] = (float)Bridge_BodyHandleFromShape( hit->shapeIdA );
+		outEvents[9 * i + 1] = (float)Bridge_BodyHandleFromShape( hit->shapeIdB );
+		outEvents[9 * i + 2] = (float)hit->point.x;
+		outEvents[9 * i + 3] = (float)hit->point.y;
+		outEvents[9 * i + 4] = (float)hit->point.z;
+		outEvents[9 * i + 5] = hit->normal.x;
+		outEvents[9 * i + 6] = hit->normal.y;
+		outEvents[9 * i + 7] = hit->normal.z;
+		outEvents[9 * i + 8] = hit->approachSpeed;
+	}
+
+	return events.hitCount;
+}
+
 int b3bridge_drain_sensor_events( int worldHandle, float* outEvents, int capacity )
 {
 	b3WorldId worldId = Bridge_GetWorld( worldHandle );
@@ -838,6 +994,87 @@ int b3bridge_drain_sensor_events( int worldHandle, float* outEvents, int capacit
 	}
 
 	return events.beginCount;
+}
+
+// Compact per-body normal-load telemetry after the most recent step.
+// Writes outResult[0] = impulse-bearing point count, outResult[1] = sum of
+// nonnegative finite totalNormalImpulse over valid manifold points on all
+// touching contacts. The temporary contact buffer is exact-capacity and freed
+// before return, so bodies with more than an arbitrary fixed number of contacts
+// are not silently under-reported.
+// Invalid body / null out => zeros (or no write when out is null).
+void b3bridge_get_body_contact_load( int bodyHandle, float* outResult )
+{
+	if ( outResult == NULL )
+	{
+		return;
+	}
+
+	outResult[0] = 0.0f;
+	outResult[1] = 0.0f;
+
+	b3BodyId bodyId = Bridge_GetBody( bodyHandle );
+	if ( B3_IS_NULL( bodyId ) )
+	{
+		return;
+	}
+
+	int capacity = b3Body_GetContactCapacity( bodyId );
+	if ( capacity <= 0 )
+	{
+		return;
+	}
+
+	b3ContactData* contacts = (b3ContactData*)malloc( (size_t)capacity * sizeof( b3ContactData ) );
+	if ( contacts == NULL )
+	{
+		return;
+	}
+
+	int count = b3Body_GetContactData( bodyId, contacts, capacity );
+
+	int pointCount = 0;
+	float totalImpulse = 0.0f;
+	for ( int i = 0; i < count; ++i )
+	{
+		const b3ContactData* cd = &contacts[i];
+		if ( cd->manifolds == NULL || cd->manifoldCount <= 0 )
+		{
+			continue;
+		}
+		for ( int m = 0; m < cd->manifoldCount; ++m )
+		{
+			const b3Manifold* manifold = &cd->manifolds[m];
+			int n = manifold->pointCount;
+			if ( n < 0 )
+			{
+				n = 0;
+			}
+			if ( n > B3_MAX_MANIFOLD_POINTS )
+			{
+				n = B3_MAX_MANIFOLD_POINTS;
+			}
+			for ( int p = 0; p < n; ++p )
+			{
+				float impulse = manifold->points[p].totalNormalImpulse;
+				if ( !Bridge_IsFiniteFloat( impulse ) || impulse < 0.0f )
+				{
+					continue;
+				}
+				// Count impulse-bearing points only (speculative zero-impulse
+				// points do not contribute to load telemetry).
+				if ( impulse > 0.0f )
+				{
+					pointCount += 1;
+					totalImpulse += impulse;
+				}
+			}
+		}
+	}
+
+	outResult[0] = (float)pointCount;
+	outResult[1] = totalImpulse;
+	free( contacts );
 }
 
 void b3bridge_destroyJoint( int jointHandle )

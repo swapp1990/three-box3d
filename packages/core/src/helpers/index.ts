@@ -7,3 +7,11 @@ export { TransformBuffer } from './transform-buffer.js';
 export { SleepManager, type SleepManagerOptions } from './sleep-manager.js';
 export { radialImpulse, type RadialImpulseOptions } from './radial-impulse.js';
 export { BodyPool } from './body-pool.js';
+export {
+  ArticulatedPoseError,
+  applyArticulatedPose,
+  type ArticulatedPose,
+  type ArticulatedPoseMeasurement,
+  type ArticulatedPoseOptions,
+  type ArticulatedPoseResult,
+} from './articulated-pose.js';

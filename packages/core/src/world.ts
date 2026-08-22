@@ -16,12 +16,18 @@
 import type { Box3DModule, Ptr } from './raw-module.js';
 import {
   BODY_TYPE_TO_INT,
+  DEFAULT_HULL_MAX_VERTICES,
+  HULL_MAX_VERTICES_LIMIT,
   INT_TO_BODY_TYPE,
+  type BodyContactLoad,
   type BodyHandle,
   type BodyOptions,
   type BodyType,
   type ContactBeginEvent,
+  type ContactEndEvent,
+  type ContactHitEvent,
   type DistanceJointOptions,
+  type HullOptions,
   type JointHandle,
   type Quat,
   type RaycastHit,
@@ -35,11 +41,20 @@ import {
   type Vec3,
   type Vec3Out,
   type WorldHandle,
-  type WorldOptions,
 } from './types.js';
 
 function finiteOr(value: number, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
+}
+
+function isVec3Tuple(value: unknown): value is Vec3 {
+  return (
+    Array.isArray(value) &&
+    value.length === 3 &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1]) &&
+    Number.isFinite(value[2])
+  );
 }
 
 function boolInt(value: boolean): number {
@@ -68,6 +83,57 @@ class Scratch {
 
 const EVENT_DRAIN_CAPACITY = 64; // per-step read chunk (bridge retries on overflow)
 
+function rotateVector(vector: Vec3, rotation: Quat): [number, number, number] {
+  const [x, y, z] = vector;
+  const [qx, qy, qz, qw] = rotation;
+  const norm = qx * qx + qy * qy + qz * qz + qw * qw;
+  if (!(norm > 1e-12) || !Number.isFinite(norm)) return [x, y, z];
+  const s = 2 / norm;
+  const xx = qx * qx * s;
+  const yy = qy * qy * s;
+  const zz = qz * qz * s;
+  const xy = qx * qy * s;
+  const xz = qx * qz * s;
+  const yz = qy * qz * s;
+  const wx = qw * qx * s;
+  const wy = qw * qy * s;
+  const wz = qw * qz * s;
+  return [
+    (1 - yy - zz) * x + (xy - wz) * y + (xz + wy) * z,
+    (xy + wz) * x + (1 - xx - zz) * y + (yz - wx) * z,
+    (xz - wy) * x + (yz + wx) * y + (1 - xx - yy) * z,
+  ];
+}
+
+function inverseTransformPoint(
+  point: Vec3,
+  position: Vec3,
+  rotation: Quat,
+): [number, number, number] {
+  return rotateVector(
+    [point[0] - position[0], point[1] - position[1], point[2] - position[2]],
+    [-rotation[0], -rotation[1], -rotation[2], rotation[3]],
+  );
+}
+
+function transformPoint(local: Vec3, position: Vec3, rotation: Quat): [number, number, number] {
+  const rotated = rotateVector(local, rotation);
+  return [position[0] + rotated[0], position[1] + rotated[1], position[2] + rotated[2]];
+}
+
+interface PointJointMetadata {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  localAnchorA: [number, number, number];
+  localAnchorB: [number, number, number];
+}
+
+type DrainExportName =
+  | 'b3bridge_drain_contact_begin_events'
+  | 'b3bridge_drain_contact_end_events'
+  | 'b3bridge_drain_contact_hit_events'
+  | 'b3bridge_drain_sensor_events';
+
 export class WorldImpl {
   readonly handle: WorldHandle;
   private readonly mod: Box3DModule;
@@ -77,10 +143,16 @@ export class WorldImpl {
   private readonly transformsScratch: Scratch;
   private readonly vectorScratch: Scratch;
   private readonly eventsScratch: Scratch;
+  private readonly pointJointMetadata = new Map<number, PointJointMetadata>();
 
   // JS-side accumulate-until-drained queues. Flat for cheap drainInto.
-  // contact: [bodyA, bodyB, approachSpeed] triples; sensor: [sensor, other] pairs.
+  // contact begin: [bodyA, bodyB, approachSpeed] triples
+  // contact end:   [bodyA, bodyB] pairs
+  // contact hit:   [bodyA, bodyB, px, py, pz, nx, ny, nz, approachSpeed] 9-tuples
+  // sensor:        [sensor, other] pairs
   private contactQueue: number[] = [];
+  private contactEndQueue: number[] = [];
+  private contactHitQueue: number[] = [];
   private sensorQueue: number[] = [];
 
   constructor(mod: Box3DModule, handle: WorldHandle) {
@@ -95,6 +167,34 @@ export class WorldImpl {
   private assertLive(): void {
     if (this.disposed) {
       throw new Error('box3d-web: World used after destroy().');
+    }
+  }
+
+  private capturePointJointMetadata(
+    bodyA: BodyHandle,
+    bodyB: BodyHandle,
+    worldAnchor: Vec3,
+  ): PointJointMetadata {
+    const ids = new Int32Array([bodyA, bodyB]);
+    const transforms = new Float32Array(14);
+    this.readTransforms(ids, transforms);
+    const poseA: Vec3 = [transforms[0], transforms[1], transforms[2]];
+    const rotationA: Quat = [transforms[3], transforms[4], transforms[5], transforms[6]];
+    const poseB: Vec3 = [transforms[7], transforms[8], transforms[9]];
+    const rotationB: Quat = [transforms[10], transforms[11], transforms[12], transforms[13]];
+    return {
+      bodyA,
+      bodyB,
+      localAnchorA: inverseTransformPoint(worldAnchor, poseA, rotationA),
+      localAnchorB: inverseTransformPoint(worldAnchor, poseB, rotationB),
+    };
+  }
+
+  private prunePointJointMetadata(body: BodyHandle): void {
+    for (const [joint, metadata] of this.pointJointMetadata) {
+      if (metadata.bodyA === body || metadata.bodyB === body) {
+        this.pointJointMetadata.delete(joint);
+      }
     }
   }
 
@@ -113,16 +213,40 @@ export class WorldImpl {
     this.mod.exports.b3bridge_setGravity(this.handle, finiteOr(x, 0), finiteOr(y, -9.81), finiteOr(z, 0));
   }
 
-  /** Read the step's begin events out of the bridge into the JS queues. */
+  /** Read the step's contact/sensor events out of the bridge into the JS queues. */
   private pullEvents(): void {
-    // Contact begin events: [bodyA, bodyB, approachSpeed] per tuple.
     this.readBridgeEvents(3, 'b3bridge_drain_contact_begin_events', (heap, base, count) => {
       for (let i = 0; i < count; i++) {
         const o = base + i * 3;
         this.contactQueue.push(heap[o] | 0, heap[o + 1] | 0, heap[o + 2]);
       }
     });
-    // Sensor begin events: [sensor, other] per tuple.
+    if (typeof this.mod.exports.b3bridge_drain_contact_end_events === 'function') {
+      this.readBridgeEvents(2, 'b3bridge_drain_contact_end_events', (heap, base, count) => {
+        for (let i = 0; i < count; i++) {
+          const o = base + i * 2;
+          this.contactEndQueue.push(heap[o] | 0, heap[o + 1] | 0);
+        }
+      });
+    }
+    if (typeof this.mod.exports.b3bridge_drain_contact_hit_events === 'function') {
+      this.readBridgeEvents(9, 'b3bridge_drain_contact_hit_events', (heap, base, count) => {
+        for (let i = 0; i < count; i++) {
+          const o = base + i * 9;
+          this.contactHitQueue.push(
+            heap[o] | 0,
+            heap[o + 1] | 0,
+            heap[o + 2],
+            heap[o + 3],
+            heap[o + 4],
+            heap[o + 5],
+            heap[o + 6],
+            heap[o + 7],
+            heap[o + 8],
+          );
+        }
+      });
+    }
     this.readBridgeEvents(2, 'b3bridge_drain_sensor_events', (heap, base, count) => {
       for (let i = 0; i < count; i++) {
         const o = base + i * 2;
@@ -133,13 +257,15 @@ export class WorldImpl {
 
   private readBridgeEvents(
     tupleSize: number,
-    exportName: 'b3bridge_drain_contact_begin_events' | 'b3bridge_drain_sensor_events',
+    exportName: DrainExportName,
     consume: (heapF32: Float32Array, base: number, count: number) => void,
   ): void {
+    const drain = this.mod.exports[exportName];
+    if (typeof drain !== 'function') return;
     let capacity = EVENT_DRAIN_CAPACITY;
     for (;;) {
       const ptr = this.eventsScratch.ensure(capacity * tupleSize * 4);
-      const total = this.mod.exports[exportName](this.handle, ptr, capacity);
+      const total = drain(this.handle, ptr, capacity);
       if (total > capacity) {
         // Bridge only wrote `capacity` tuples; re-read with a buffer big enough
         // to capture all of them in one shot (mirrors the old bridge retry).
@@ -187,6 +313,7 @@ export class WorldImpl {
   destroyBody(body: BodyHandle): void {
     this.assertLive();
     this.mod.exports.b3bridge_destroy_body(body);
+    this.prunePointJointMetadata(body);
   }
 
   setBodyType(body: BodyHandle, type: BodyType): void {
@@ -284,6 +411,122 @@ export class WorldImpl {
       finiteOr(hy, 0.5),
       finiteOr(hz, 0.5),
     ) as ShapeHandle;
+  }
+
+  /**
+   * Attach a **convex** hull collider built from body-local points.
+   *
+   * Computes one convex hull — concavity is not preserved. For concave meshes,
+   * pre-decompose into multiple convex hulls (CoACD recommended) and call this
+   * once per piece. Default `maxVertices` is 64 (good for demolition fragments);
+   * Box3D hard-caps at 255.
+   *
+   * Accepts either `readonly Vec3[]` or a packed `Float32Array` of XYZ triples.
+   * Throws on invalid input or native hull-build failure (never returns a fake
+   * zero handle as success).
+   */
+  addHull(
+    body: BodyHandle,
+    points: readonly Vec3[] | Float32Array,
+    options: HullOptions = {},
+  ): ShapeHandle {
+    this.assertLive();
+    const {
+      density = 1,
+      friction = 0.6,
+      restitution = 0,
+      rollingResistance = 0,
+      maxVertices = DEFAULT_HULL_MAX_VERTICES,
+    } = options;
+    if (
+      !Number.isInteger(maxVertices) ||
+      maxVertices < 4 ||
+      maxVertices > HULL_MAX_VERTICES_LIMIT
+    ) {
+      throw new RangeError(
+        `box3d-web: addHull maxVertices must be an integer in [4, ${HULL_MAX_VERTICES_LIMIT}] (got ${String(maxVertices)}).`,
+      );
+    }
+    let pointCount: number;
+    let writeToHeap: (heap: Float32Array, baseF32: number) => void;
+    if (points instanceof Float32Array) {
+      if (points.length < 12 || points.length % 3 !== 0) {
+        throw new RangeError(
+          `box3d-web: addHull Float32Array must hold ≥ 4 XYZ triples (length multiple of 3, ≥ 12; got length ${points.length}).`,
+        );
+      }
+      pointCount = points.length / 3;
+      for (let i = 0; i < points.length; i++) {
+        if (!Number.isFinite(points[i])) {
+          throw new RangeError(
+            `box3d-web: addHull points must be finite (non-finite at float index ${i}).`,
+          );
+        }
+      }
+      writeToHeap = (heap, baseF32) => {
+        heap.set(points, baseF32);
+      };
+    } else if (Array.isArray(points)) {
+      if (points.length < 4) {
+        throw new RangeError(
+          `box3d-web: addHull requires at least 4 points (got ${points.length}).`,
+        );
+      }
+      pointCount = points.length;
+      for (let i = 0; i < pointCount; i++) {
+        const p = points[i];
+        if (!isVec3Tuple(p)) {
+          throw new TypeError(
+            `box3d-web: addHull points[${i}] must be a finite Vec3 [x, y, z].`,
+          );
+        }
+      }
+      writeToHeap = (heap, baseF32) => {
+        for (let i = 0; i < pointCount; i++) {
+          const p = points[i];
+          const o = baseF32 + i * 3;
+          heap[o] = p[0];
+          heap[o + 1] = p[1];
+          heap[o + 2] = p[2];
+        }
+      };
+    } else {
+      throw new TypeError(
+        'box3d-web: addHull points must be readonly Vec3[] or a packed Float32Array.',
+      );
+    }
+    const addHullShape = this.mod.exports.b3bridge_add_hull_shape;
+    if (typeof addHullShape !== 'function') {
+      throw new Error(
+        'box3d-web: addHull requires Capabilities.convexHull (WASM export b3bridge_add_hull_shape missing — rebuild native).',
+      );
+    }
+    const bytes = pointCount * 3 * 4;
+    const ptr = this.mod.malloc(bytes);
+    if (!ptr) {
+      throw new Error('box3d-web: addHull failed to allocate WASM point buffer.');
+    }
+    try {
+      writeToHeap(this.mod.HEAPF32, ptr >> 2);
+      const shape = addHullShape(
+        body,
+        ptr,
+        pointCount,
+        maxVertices,
+        finiteOr(density, 1),
+        finiteOr(friction, 0.6),
+        finiteOr(restitution, 0),
+        Math.max(0, finiteOr(rollingResistance, 0)),
+      );
+      if (shape === 0) {
+        throw new Error(
+          'box3d-web: addHull native hull build failed (invalid body, degenerate/coplanar point cloud, or shape pool full).',
+        );
+      }
+      return shape as ShapeHandle;
+    } finally {
+      this.mod.free(ptr);
+    }
   }
 
   /** Update a shape's friction after creation (bridge round 2). */
@@ -391,12 +634,12 @@ export class WorldImpl {
   }
 
   private readVec3(
-    fn: (bodyHandle: number, outPtr: Ptr) => void,
-    body: BodyHandle,
+    fn: (handle: number, outPtr: Ptr) => void,
+    handle: number,
     out?: Vec3Out | Float32Array,
   ): Vec3Out | Float32Array {
     const ptr = this.vectorScratch.ensure(3 * 4);
-    fn(body, ptr);
+    fn(handle, ptr);
     const heap = this.mod.HEAPF32;
     const i = ptr >> 2;
     const x = heap[i];
@@ -519,7 +762,7 @@ export class WorldImpl {
       : 0.7;
     const motor = options.motor;
     const [mvx, mvy, mvz] = motor?.velocity ?? [0, 0, 0];
-    return this.mod.exports.b3bridge_create_spherical_joint(
+    const joint = this.mod.exports.b3bridge_create_spherical_joint(
       this.handle,
       a,
       b,
@@ -539,6 +782,13 @@ export class WorldImpl {
       finiteOr(mvz, 0),
       motor ? Math.max(0, finiteOr(motor.maxTorque, 0)) : 0,
     ) as JointHandle;
+    if (joint > 0) {
+      this.pointJointMetadata.set(
+        joint,
+        this.capturePointJointMetadata(a, b, [finiteOr(ax, 0), finiteOr(ay, 0), finiteOr(az, 0)]),
+      );
+    }
+    return joint;
   }
 
   createRevoluteJoint(
@@ -554,7 +804,7 @@ export class WorldImpl {
       Number.isFinite(options.limit[0]) &&
       Number.isFinite(options.limit[1]);
     const motor = options.motor;
-    return this.mod.exports.b3bridge_create_revolute_joint(
+    const joint = this.mod.exports.b3bridge_create_revolute_joint(
       this.handle,
       a,
       b,
@@ -571,6 +821,13 @@ export class WorldImpl {
       motor ? finiteOr(motor.speed, 0) : 0,
       motor ? Math.max(0, finiteOr(motor.maxTorque, 0)) : 0,
     ) as JointHandle;
+    if (joint > 0) {
+      this.pointJointMetadata.set(
+        joint,
+        this.capturePointJointMetadata(a, b, [finiteOr(ax, 0), finiteOr(ay, 0), finiteOr(az, 0)]),
+      );
+    }
+    return joint;
   }
 
   createDistanceJoint(
@@ -607,6 +864,50 @@ export class WorldImpl {
   destroyJoint(joint: JointHandle): void {
     this.assertLive();
     this.mod.exports.b3bridge_destroyJoint(joint);
+    this.pointJointMetadata.delete(joint);
+  }
+
+  /**
+   * Measure the world-space distance between the two anchors of a spherical or
+   * revolute joint. Distance, filter, unknown, and destroyed joints are rejected
+   * because they do not represent a point coincidence constraint.
+   */
+  getJointAnchorSeparation(joint: JointHandle): number {
+    this.assertLive();
+    const metadata = this.pointJointMetadata.get(joint);
+    if (!metadata) {
+      throw new RangeError(
+        'box3d-web: getJointAnchorSeparation requires a live spherical/revolute joint.',
+      );
+    }
+    const ids = new Int32Array([metadata.bodyA, metadata.bodyB]);
+    const transforms = new Float32Array(14);
+    this.readTransforms(ids, transforms);
+    if (
+      !Number.isFinite(transforms[0]) ||
+      !Number.isFinite(transforms[1]) ||
+      !Number.isFinite(transforms[2]) ||
+      !Number.isFinite(transforms[7]) ||
+      !Number.isFinite(transforms[8]) ||
+      !Number.isFinite(transforms[9])
+    ) {
+      throw new RangeError('box3d-web: getJointAnchorSeparation encountered a destroyed body.');
+    }
+    const anchorA = transformPoint(
+      metadata.localAnchorA,
+      [transforms[0], transforms[1], transforms[2]],
+      [transforms[3], transforms[4], transforms[5], transforms[6]],
+    );
+    const anchorB = transformPoint(
+      metadata.localAnchorB,
+      [transforms[7], transforms[8], transforms[9]],
+      [transforms[10], transforms[11], transforms[12], transforms[13]],
+    );
+    return Math.hypot(
+      anchorA[0] - anchorB[0],
+      anchorA[1] - anchorB[1],
+      anchorA[2] - anchorB[2],
+    );
   }
 
   /**
@@ -662,6 +963,71 @@ export class WorldImpl {
     );
   }
 
+  getBodyContactLoad(body: BodyHandle): BodyContactLoad;
+  getBodyContactLoad<T extends BodyContactLoad>(body: BodyHandle, out: T): T;
+  getBodyContactLoad(body: BodyHandle, out?: BodyContactLoad): BodyContactLoad {
+    this.assertLive();
+    const fn = this.mod.exports.b3bridge_get_body_contact_load;
+    if (typeof fn !== 'function') {
+      throw new Error(
+        'box3d-web: getBodyContactLoad requires Capabilities.contactLoadTelemetry (WASM export missing).',
+      );
+    }
+    const ptr = this.vectorScratch.ensure(2 * 4);
+    fn(body, ptr);
+    const heap = this.mod.HEAPF32;
+    const i = ptr >> 2;
+    const pointCount = heap[i] | 0;
+    const totalNormalImpulse = heap[i + 1];
+    if (out) {
+      out.pointCount = pointCount;
+      out.totalNormalImpulse = totalNormalImpulse;
+      return out;
+    }
+    return { pointCount, totalNormalImpulse };
+  }
+
+  /**
+   * Current revolute motor torque in Newton-meters after the most recent step
+   * (`Capabilities.jointMotorTelemetry`). Returns `0` for invalid handles and
+   * when the loaded WASM lacks the export.
+   */
+  getRevoluteMotorTorque(joint: JointHandle): number {
+    this.assertLive();
+    const fn = this.mod.exports.b3bridge_get_revolute_motor_torque;
+    if (typeof fn !== 'function') return 0;
+    return fn(joint);
+  }
+
+  getSphericalMotorTorque(joint: JointHandle): Vec3Out;
+  getSphericalMotorTorque<T extends Vec3Out | Float32Array>(joint: JointHandle, out: T): T;
+  getSphericalMotorTorque(
+    joint: JointHandle,
+    out?: Vec3Out | Float32Array,
+  ): Vec3Out | Float32Array {
+    this.assertLive();
+    const fn = this.mod.exports.b3bridge_get_spherical_motor_torque;
+    if (typeof fn !== 'function') {
+      if (out instanceof Float32Array) {
+        if (out.length < 3) {
+          throw new RangeError('box3d-web: Vec3 Float32Array out must have length ≥ 3.');
+        }
+        out[0] = 0;
+        out[1] = 0;
+        out[2] = 0;
+        return out;
+      }
+      if (out) {
+        out.x = 0;
+        out.y = 0;
+        out.z = 0;
+        return out;
+      }
+      return { x: 0, y: 0, z: 0 };
+    }
+    return this.readVec3(fn, joint, out);
+  }
+
   // --- queries ---
 
   castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null {
@@ -703,6 +1069,34 @@ export class WorldImpl {
     return out;
   }
 
+  drainContactEndEvents(): ContactEndEvent[] {
+    this.assertLive();
+    const q = this.contactEndQueue;
+    const out: ContactEndEvent[] = [];
+    for (let i = 0; i < q.length; i += 2) {
+      out.push({ bodyA: q[i] as BodyHandle, bodyB: q[i + 1] as BodyHandle });
+    }
+    this.contactEndQueue = [];
+    return out;
+  }
+
+  drainContactHitEvents(): ContactHitEvent[] {
+    this.assertLive();
+    const q = this.contactHitQueue;
+    const out: ContactHitEvent[] = [];
+    for (let i = 0; i < q.length; i += 9) {
+      out.push({
+        bodyA: q[i] as BodyHandle,
+        bodyB: q[i + 1] as BodyHandle,
+        point: { x: q[i + 2], y: q[i + 3], z: q[i + 4] },
+        normal: { x: q[i + 5], y: q[i + 6], z: q[i + 7] },
+        approachSpeed: q[i + 8],
+      });
+    }
+    this.contactHitQueue = [];
+    return out;
+  }
+
   drainSensorEvents(): SensorEvent[] {
     this.assertLive();
     const q = this.sensorQueue;
@@ -729,6 +1123,49 @@ export class WorldImpl {
       out[i * 3 + 2] = q[i * 3 + 2];
     }
     this.contactQueue = [];
+    return total;
+  }
+
+  /** Writes [bodyA, bodyB] tuples into `out`. Returns total accumulated count
+   *  (may exceed out's tuple capacity). Drains the shared end queue. */
+  drainContactEndEventsInto(out: Float32Array): number {
+    this.assertLive();
+    const q = this.contactEndQueue;
+    const total = q.length / 2;
+    const cap = Math.floor(out.length / 2);
+    const write = Math.min(total, cap);
+    for (let i = 0; i < write; i++) {
+      out[i * 2] = q[i * 2];
+      out[i * 2 + 1] = q[i * 2 + 1];
+    }
+    this.contactEndQueue = [];
+    return total;
+  }
+
+  /** Writes
+   *  [bodyA, bodyB, pointX, pointY, pointZ, normalX, normalY, normalZ, approachSpeed]
+   *  tuples into `out`. Returns total accumulated count (may exceed out's tuple
+   *  capacity). Drains the shared hit queue. */
+  drainContactHitEventsInto(out: Float32Array): number {
+    this.assertLive();
+    const q = this.contactHitQueue;
+    const total = q.length / 9;
+    const cap = Math.floor(out.length / 9);
+    const write = Math.min(total, cap);
+    for (let i = 0; i < write; i++) {
+      const src = i * 9;
+      const dst = i * 9;
+      out[dst] = q[src];
+      out[dst + 1] = q[src + 1];
+      out[dst + 2] = q[src + 2];
+      out[dst + 3] = q[src + 3];
+      out[dst + 4] = q[src + 4];
+      out[dst + 5] = q[src + 5];
+      out[dst + 6] = q[src + 6];
+      out[dst + 7] = q[src + 7];
+      out[dst + 8] = q[src + 8];
+    }
+    this.contactHitQueue = [];
     return total;
   }
 
@@ -815,6 +1252,26 @@ export class WorldImpl {
     return out;
   }
 
+  /** Writes one byte per body (`1` awake, `0` asleep) into `out`. Reuses both
+   * caller-provided buffers and returns `out`; no per-body or per-call
+   * allocations are performed. */
+  readSleepStates(ids: Int32Array, out: Uint8Array): Uint8Array {
+    this.assertLive();
+    if (!(ids instanceof Int32Array)) {
+      throw new TypeError('box3d-web: readSleepStates `ids` must be an Int32Array.');
+    }
+    if (!(out instanceof Uint8Array)) {
+      throw new TypeError('box3d-web: readSleepStates `out` must be a Uint8Array.');
+    }
+    if (out.length < ids.length) {
+      throw new RangeError('box3d-web: readSleepStates `out` must have ≥ ids.length bytes.');
+    }
+    for (let i = 0; i < ids.length; i++) {
+      out[i] = this.mod.exports.b3bridge_isBodyAwake(ids[i]) !== 0 ? 1 : 0;
+    }
+    return out;
+  }
+
   destroy(): void {
     if (this.disposed) return;
     this.mod.exports.b3bridge_destroy_world(this.handle);
@@ -823,7 +1280,10 @@ export class WorldImpl {
     this.vectorScratch.dispose();
     this.eventsScratch.dispose();
     this.contactQueue = [];
+    this.contactEndQueue = [];
+    this.contactHitQueue = [];
     this.sensorQueue = [];
+    this.pointJointMetadata.clear();
     this.disposed = true;
   }
 }

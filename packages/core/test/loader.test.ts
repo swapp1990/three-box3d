@@ -4,7 +4,7 @@ import { loadBox3DModule } from '../src/wasm-loader.js';
 import { freshBox3D, readWasmBytes } from './helpers.js';
 
 const WASM_URL = new URL('../wasm/box3d.wasm', import.meta.url);
-const EXPECTED_BRIDGE_EXPORTS = 50; // matches native/expected-exports.txt (+ malloc/free = 52)
+const EXPECTED_BRIDGE_EXPORTS = 56; // matches native/expected-exports.txt (+ malloc/free = 58)
 
 describe('wasm loader', () => {
   it('loads via explicit wasmUrl and runs static ctors', async () => {
@@ -58,7 +58,7 @@ describe('wasm loader', () => {
     expect(typeof mod.exports.b3bridge_create_world).toBe('function');
   });
 
-  it('exports exactly the expected bridge surface (50 bridge fns)', async () => {
+  it('exports exactly the expected bridge surface (56 bridge fns)', async () => {
     const bytes = await readWasmBytes();
     const mod = await loadBox3DModule({ wasmBinary: bytes });
     const names = Object.keys(mod.exports as unknown as Record<string, unknown>);

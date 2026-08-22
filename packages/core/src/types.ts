@@ -59,6 +59,17 @@ export interface ShapeMaterial {
   rollingResistance?: number;
 }
 
+/** `addHull` options — material + hull-build vertex budget. */
+export interface HullOptions extends ShapeMaterial {
+  /** Max vertices retained by the native hull builder. Default 64; hard limit 255. */
+  maxVertices?: number;
+}
+
+/** Default vertex budget for `World.addHull`. Good for demolition fragments. */
+export const DEFAULT_HULL_MAX_VERTICES = 64;
+/** Box3D hard-cap for hull vertices (`b3CreateHull` is uint8-limited). */
+export const HULL_MAX_VERTICES_LIMIT = 255;
+
 /** Solver-integrated joint motor (v0.5). `velocity` is the desired motor
  *  angular velocity (rad/s, world-ish joint-frame vector); `maxTorque` (N·m,
  *  non-negative) clamps how hard the motor may drive toward it — the solver
@@ -121,6 +132,31 @@ export interface SensorEvent {
   other: BodyHandle; // the body that entered
 }
 
+/** Contact-end event. A destroyed shape maps to body handle 0. */
+export interface ContactEndEvent {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+}
+
+export interface ContactHitEvent {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  /** World contact point. Freshly allocated per event. */
+  point: Readonly<{ x: number; y: number; z: number }>;
+  /** Native A→B contact normal. */
+  normal: Readonly<{ x: number; y: number; z: number }>;
+  /** Approach speed at contact (m/s). */
+  approachSpeed: number;
+}
+
+/** Per-body contact normal-load telemetry after the most recent step. */
+export interface BodyContactLoad {
+  /** Impulse-bearing manifold point count. */
+  pointCount: number;
+  /** Sum of nonnegative finite totalNormalImpulse over valid manifold points. */
+  totalNormalImpulse: number;
+}
+
 /**
  * Which optional native probes this WASM build supports. ADD-ONLY across versions.
  */
@@ -155,6 +191,17 @@ export interface Capabilities {
   /** `World.createFilterJoint` — a joint with no constraint that only disables
    *  collision between two bodies. v0.5 addendum. */
   filterJoint: boolean;
+  /** Solver motor-torque readback (`getRevoluteMotorTorque` /
+   *  `getSphericalMotorTorque`). */
+  jointMotorTelemetry: boolean;
+  /** `World.drainContactEndEvents` — native contact-end drain. */
+  contactEndEvents: boolean;
+  /** `World.drainContactHitEvents` — native contact-hit drain (point + normal). */
+  contactHitEvents: boolean;
+  /** `World.getBodyContactLoad` — per-body contact normal-load telemetry. */
+  contactLoadTelemetry: boolean;
+  /** `World.addHull` — convex hull from a body-local point cloud. */
+  convexHull: boolean;
   /** Open-ended probe for features added after these typings were published. */
   has(feature: string): boolean;
 }

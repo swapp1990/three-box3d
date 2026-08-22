@@ -13,27 +13,33 @@
  */
 import { computeCapabilities } from './capabilities.js';
 import type { Box3DModule } from './raw-module.js';
-import type {
-  BodyHandle,
-  BodyOptions,
-  BodyType,
-  Capabilities,
-  ContactBeginEvent,
-  DistanceJointOptions,
-  JointHandle,
-  Quat,
-  RaycastHit,
-  RevoluteJointMotor,
-  RevoluteJointOptions,
-  SensorEvent,
-  ShapeHandle,
-  ShapeMaterial,
-  SphericalJointMotor,
-  SphericalJointOptions,
-  Vec3,
-  Vec3Out,
-  WorldHandle,
-  WorldOptions,
+import {
+  DEFAULT_HULL_MAX_VERTICES,
+  HULL_MAX_VERTICES_LIMIT,
+  type BodyContactLoad,
+  type BodyHandle,
+  type BodyOptions,
+  type BodyType,
+  type Capabilities,
+  type ContactBeginEvent,
+  type ContactEndEvent,
+  type ContactHitEvent,
+  type DistanceJointOptions,
+  type HullOptions,
+  type JointHandle,
+  type Quat,
+  type RaycastHit,
+  type RevoluteJointMotor,
+  type RevoluteJointOptions,
+  type SensorEvent,
+  type ShapeHandle,
+  type ShapeMaterial,
+  type SphericalJointMotor,
+  type SphericalJointOptions,
+  type Vec3,
+  type Vec3Out,
+  type WorldHandle,
+  type WorldOptions,
 } from './types.js';
 import { loadBox3DModule, type WasmLoadOptions } from './wasm-loader.js';
 import { WorldImpl } from './world.js';
@@ -80,6 +86,17 @@ export interface World {
     material?: ShapeMaterial,
   ): ShapeHandle;
   addSensorBox(body: BodyHandle, half: Vec3): ShapeHandle;
+  /**
+   * Convex hull from body-local points (`readonly Vec3[]` or packed `Float32Array`
+   * of XYZ triples). Builds **one** convex hull — concavity is not preserved.
+   * Default `maxVertices` is 64; Box3D hard-caps at 255. Throws on invalid input
+   * or native hull-build failure.
+   */
+  addHull(
+    body: BodyHandle,
+    points: readonly Vec3[] | Float32Array,
+    options?: HullOptions,
+  ): ShapeHandle;
   /** Bridge round 2 — see `Capabilities.shapeMaterial`. */
   setShapeFriction(shape: ShapeHandle, friction: number): void;
   /** Bridge round 2 — see `Capabilities.shapeMaterial`. */
@@ -128,12 +145,24 @@ export interface World {
   /** Enable/disable + retune a spherical joint's solver-integrated motor.
    *  `null` disables (v0.5 — see `Capabilities.jointMotors`). */
   setSphericalMotor(joint: JointHandle, opts: SphericalJointMotor | null): void;
+  /** World-space distance between the two anchors of a live spherical/revolute joint. */
+  getJointAnchorSeparation(joint: JointHandle): number;
+  /** Revolute motor torque (N·m) after the most recent step. `0` if unsupported. */
+  getRevoluteMotorTorque(joint: JointHandle): number;
+  getSphericalMotorTorque(joint: JointHandle): Vec3Out;
+  getSphericalMotorTorque<T extends Vec3Out | Float32Array>(joint: JointHandle, out: T): T;
+  getBodyContactLoad(body: BodyHandle): BodyContactLoad;
+  getBodyContactLoad<T extends BodyContactLoad>(body: BodyHandle, out: T): T;
 
   castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null;
 
   drainContactBeginEvents(): ContactBeginEvent[];
+  drainContactEndEvents(): ContactEndEvent[];
+  drainContactHitEvents(): ContactHitEvent[];
   drainSensorEvents(): SensorEvent[];
   drainContactBeginEventsInto(out: Float32Array): number;
+  drainContactEndEventsInto(out: Float32Array): number;
+  drainContactHitEventsInto(out: Float32Array): number;
   drainSensorEventsInto(out: Int32Array): number;
 
   wakeBody(body: BodyHandle): void;
@@ -144,6 +173,8 @@ export interface World {
   bodyCount(): number;
 
   readTransforms(ids: Int32Array, out: Float32Array): Float32Array;
+  /** Writes one byte per body (`1` awake, `0` asleep) into `out`. */
+  readSleepStates(ids: Int32Array, out: Uint8Array): Uint8Array;
 
   destroy(): void;
 }
@@ -250,12 +281,16 @@ export function probeCapabilities(world: World): Capabilities {
 }
 
 export type {
+  BodyContactLoad,
   BodyHandle,
   BodyOptions,
   BodyType,
   Capabilities,
   ContactBeginEvent,
+  ContactEndEvent,
+  ContactHitEvent,
   DistanceJointOptions,
+  HullOptions,
   JointHandle,
   Quat,
   RaycastHit,
@@ -272,6 +307,8 @@ export type {
   WorldOptions,
 };
 
+export { DEFAULT_HULL_MAX_VERTICES, HULL_MAX_VERTICES_LIMIT };
+
 // Helper modules (tree-shakeable named exports; none imports three).
 export { FixedStepper, type FixedStepperOptions } from './helpers/fixed-step.js';
 export { TransformBuffer } from './helpers/transform-buffer.js';
@@ -281,3 +318,11 @@ export {
 } from './helpers/sleep-manager.js';
 export { radialImpulse, type RadialImpulseOptions } from './helpers/radial-impulse.js';
 export { BodyPool } from './helpers/body-pool.js';
+export {
+  ArticulatedPoseError,
+  applyArticulatedPose,
+  type ArticulatedPose,
+  type ArticulatedPoseMeasurement,
+  type ArticulatedPoseOptions,
+  type ArticulatedPoseResult,
+} from './helpers/articulated-pose.js';

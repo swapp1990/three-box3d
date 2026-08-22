@@ -30,12 +30,27 @@
 # set_spherical_motor, plus enableMotor/motor params folded into the EXISTING
 # create_spherical_joint / create_revolute_joint signatures (param count grows,
 # export name does not) — for 50 bridge exports and 52 total including malloc/free.
+#
+# Phase 0 contact-truth (humanoid locomotion) adds 2 more wrappers:
+# drain_contact_end_events and drain_contact_hit_events — for 52 bridge exports
+# and 54 total including malloc/free.
+#
+# Public solver motor-torque readback adds 2 more wrappers:
+# get_revolute_motor_torque and get_spherical_motor_torque — for 54 bridge
+# exports and 56 total including malloc/free.
+#
+# Per-body contact normal-load telemetry adds 1 more wrapper:
+# get_body_contact_load — for 55 bridge exports and 57 total including malloc/free.
+#
+# Convex hull shape from a point cloud adds 1 more wrapper:
+# add_hull_shape — for 56 bridge exports and 58 total including malloc/free.
 
 _malloc
 _free
 
 _b3bridge_add_box_shape
 _b3bridge_add_capsule_shape
+_b3bridge_add_hull_shape
 _b3bridge_add_sensor_box_shape
 _b3bridge_add_sphere_shape
 _b3bridge_apply_impulse
@@ -54,11 +69,16 @@ _b3bridge_destroy_body
 _b3bridge_destroy_world
 _b3bridge_destroyJoint
 _b3bridge_drain_contact_begin_events
+_b3bridge_drain_contact_end_events
+_b3bridge_drain_contact_hit_events
 _b3bridge_drain_sensor_events
 _b3bridge_explode
 _b3bridge_get_awake_body_count
+_b3bridge_get_body_contact_load
 _b3bridge_get_body_count
 _b3bridge_get_linear_velocity
+_b3bridge_get_revolute_motor_torque
+_b3bridge_get_spherical_motor_torque
 _b3bridge_getAngularVelocity
 _b3bridge_getAngularDamping
 _b3bridge_getBodyInertia

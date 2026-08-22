@@ -7,8 +7,8 @@
  * the contract between the loader and that API, and the single place export
  * signatures are pinned.
  *
- * Ground truth for the export list is `native/expected-exports.txt` (52 exports:
- * 50 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
+ * Ground truth for the export list is `native/expected-exports.txt` (58 exports:
+ * 56 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
  * ShapeHandle), NOT void — this was a documented bug in the old repo's `.d.ts`.
  *
  * Pointers are WASM linear-memory byte offsets (`number`). All floats are f32 on
@@ -72,6 +72,15 @@ export interface Box3DExports {
     density: number, friction: number, restitution: number, rollingResistance: number,
   ): number;
   b3bridge_add_sensor_box_shape(bodyHandle: number, hx: number, hy: number, hz: number): number;
+  /** Convex hull from a packed float XYZ point cloud (body-local). Returns 0 on
+   *  failure — never a fake success handle. */
+  b3bridge_add_hull_shape(
+    bodyHandle: number,
+    points: Ptr,
+    pointCount: number,
+    maxVertexCount: number,
+    density: number, friction: number, restitution: number, rollingResistance: number,
+  ): number;
 
   // --- velocities / forces / impulses ---
   b3bridge_apply_impulse(
@@ -163,6 +172,12 @@ export interface Box3DExports {
   b3bridge_set_spherical_motor(
     jointHandle: number, enableMotor: number, vx: number, vy: number, vz: number, maxMotorTorque: number,
   ): void;
+  /** Current revolute motor torque (N·m) after the most recent step. Invalid
+   *  handles return 0. */
+  b3bridge_get_revolute_motor_torque(jointHandle: number): number;
+  /** Writes spherical motor torque (N·m) as 3 floats to `outTorque`. Invalid
+   *  handles write zeros. */
+  b3bridge_get_spherical_motor_torque(jointHandle: number, outTorque: Ptr): void;
 
   // --- queries ---
   /** Writes 5 floats to `outHit`: [hit(0/1), bodyHandle, px, py, pz]. */
@@ -204,7 +219,14 @@ export interface Box3DExports {
 
   // --- events (return total accumulated count; may exceed capacity) ---
   b3bridge_drain_contact_begin_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+  /** Tuple layout: [bodyA, bodyB] per event. */
+  b3bridge_drain_contact_end_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+  /** Tuple layout: [bodyA, bodyB, px, py, pz, nx, ny, nz, approachSpeed]. */
+  b3bridge_drain_contact_hit_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
   b3bridge_drain_sensor_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+
+  /** Writes 2 floats: [pointCount, totalNormalImpulse]. Invalid body → zeros. */
+  b3bridge_get_body_contact_load(bodyHandle: number, outResult: Ptr): void;
 }
 
 /**

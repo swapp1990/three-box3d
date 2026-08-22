@@ -19,7 +19,8 @@ export class FixedStepper {
   readonly fixedDt: number;
   readonly substeps: number;
   private readonly maxDeltaClamp: number;
-  private readonly maxStepsPerFrame: number;
+  /** Mutable catch-up budget; change via setMaxStepsPerFrame (does not reset clocks). */
+  private maxStepsPerFrame: number;
   private accumulator = 0;
   private _simTime = 0;
 
@@ -32,6 +33,28 @@ export class FixedStepper {
       options.maxStepsPerFrame && options.maxStepsPerFrame > 0
         ? options.maxStepsPerFrame | 0
         : 3;
+  }
+
+  /**
+   * Update the per-frame catch-up step budget without touching accumulator or simTime.
+   *
+   * Finite values are truncated toward zero with `| 0` (same as the constructor).
+   * The truncated result must be an integer ≥ 1; otherwise throws RangeError.
+   * Fractional inputs like 2.9 become 2; 0.9 / NaN / ±Infinity / negatives throw.
+   */
+  setMaxStepsPerFrame(value: number): void {
+    if (!Number.isFinite(value)) {
+      throw new RangeError(
+        `FixedStepper.setMaxStepsPerFrame: expected finite number ≥ 1, got ${value}`,
+      );
+    }
+    const budget = value | 0;
+    if (budget < 1) {
+      throw new RangeError(
+        `FixedStepper.setMaxStepsPerFrame: expected integer budget ≥ 1 (after truncating toward zero), got ${value}`,
+      );
+    }
+    this.maxStepsPerFrame = budget;
   }
 
   /**

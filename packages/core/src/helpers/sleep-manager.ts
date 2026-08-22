@@ -23,6 +23,8 @@ export interface SleepManagerOptions {
   settleSteps?: number; // steps to let a fresh spawn settle, default 2
   sweepIntervalSec?: number; // periodic sweep cadence, default 2 s
   moveThreshold?: number; // per-sweep displacement to still count as "moving", default 0.01 m
+  /** If provided, a body is force-slept / sweep-slept only when this returns true. */
+  shouldSleep?: (body: BodyHandle) => boolean;
 }
 
 export class SleepManager {
@@ -30,6 +32,7 @@ export class SleepManager {
   private readonly settleSteps: number;
   private readonly sweepIntervalSec: number;
   private readonly moveThresholdSq: number;
+  private readonly shouldSleep: (body: BodyHandle) => boolean;
 
   private watched: readonly BodyHandle[] = [];
   private buffer: BufferLike | null = null;
@@ -49,6 +52,7 @@ export class SleepManager {
       options.sweepIntervalSec && options.sweepIntervalSec > 0 ? options.sweepIntervalSec : 2;
     const thr = options.moveThreshold && options.moveThreshold > 0 ? options.moveThreshold : 0.01;
     this.moveThresholdSq = thr * thr;
+    this.shouldSleep = options.shouldSleep ?? (() => true);
   }
 
   /** Track bodies (their poses live in the given TransformBuffer). Arms a fresh
@@ -72,7 +76,8 @@ export class SleepManager {
     }
     // countdown hit 0 this call → sleep everything, then disarm.
     for (let i = 0; i < this.watched.length; i++) {
-      this.world.sleepBody(this.watched[i]);
+      const body = this.watched[i];
+      if (this.shouldSleep(body)) this.world.sleepBody(body);
     }
     this.settleCountdown = -1;
   }
@@ -99,7 +104,7 @@ export class SleepManager {
       const dx = transforms[offset] - this.lastSample[so];
       const dy = transforms[offset + 1] - this.lastSample[so + 1];
       const dz = transforms[offset + 2] - this.lastSample[so + 2];
-      if (dx * dx + dy * dy + dz * dz < this.moveThresholdSq) {
+      if (dx * dx + dy * dy + dz * dz < this.moveThresholdSq && this.shouldSleep(body)) {
         this.world.sleepBody(body);
       }
     }
