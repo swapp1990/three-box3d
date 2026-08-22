@@ -261,7 +261,211 @@ describe('SleepManager', () => {
     mgr.sweep(2);
     expect(slept).toEqual([1]);
   });
+
+  it('legacy: rotating-in-place body is slept when angleThreshold is unset', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, { settleSteps: 0, sweepIntervalSec: 2, moveThreshold: 0.01 });
+    mgr.watch([bh(1)], buf);
+    mgr.sweep(0);
+    setPose(buf, 1, 0, 0, 0, 0, 0.09983, 0, 0.995);
+    mgr.sweep(2);
+    expect(slept).toEqual([1]);
+  });
+
+  it('legacy: quiet body next to a moving body is slept when neighborRadius is unset', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [0.4, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, { settleSteps: 0, sweepIntervalSec: 2, moveThreshold: 0.01 });
+    mgr.watch([bh(1), bh(2)], buf);
+    mgr.sweep(0);
+    setPose(buf, 2, 0.45, 0, 0, 0, 0, 0, 1);
+    mgr.sweep(2);
+    expect(slept).toEqual([1]);
+  });
+
+  it('does not sleep a rotating-in-place body when angleThreshold is set', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [10, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      angleThreshold: 0.002,
+    });
+    mgr.watch([bh(1), bh(2)], buf);
+    mgr.sweep(0);
+    setPose(buf, 1, 0, 0, 0, 0, 0.09983, 0, 0.995);
+    mgr.sweep(2);
+    expect(slept).toEqual([2]);
+  });
+
+  it('does not sleep a quiet body adjacent to a moving awake neighbor', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [0.4, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      neighborRadius: 0.6,
+    });
+    mgr.watch([bh(1), bh(2)], buf);
+    mgr.sweep(0);
+    setPose(buf, 2, 0.45, 0, 0, 0, 0, 0, 1);
+    mgr.sweep(2);
+    expect(slept).toEqual([]);
+  });
+
+  it('sleeps a fully-quiet cluster and leaves a separate moving cluster awake', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [0.3, 0, 0, 0, 0, 0, 1],
+      3: [10, 0, 0, 0, 0, 0, 1],
+      4: [10.3, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      neighborRadius: 0.6,
+    });
+    mgr.watch([bh(1), bh(2), bh(3), bh(4)], buf);
+    mgr.sweep(0);
+    setPose(buf, 4, 10.4, 0, 0, 0, 0, 0, 1);
+    mgr.sweep(2);
+    expect(slept.sort()).toEqual([1, 2]);
+  });
+
+  it('does not let a sleeping neighbor veto, and does not re-sleep it', () => {
+    const awake = new Map<number, number>([
+      [1, 1],
+      [2, 0],
+    ]);
+    const { world, slept } = mockSleepWorld(awake);
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [0.3, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      neighborRadius: 0.6,
+    });
+    mgr.watch([bh(1), bh(2)], buf);
+    mgr.sweep(0);
+    setPose(buf, 2, 0.35, 0, 0, 0, 0, 0, 1); // sleeper "moved" in the buffer; must not veto
+    mgr.sweep(2);
+    expect(slept).toEqual([1]);
+  });
+
+  it('a body that left the neighborhood this interval still vetoes its origin cluster', () => {
+    const { world, slept } = mockSleepWorld();
+    const buf = poseBuffer({
+      1: [0, 0, 0, 0, 0, 0, 1],
+      2: [0.3, 0, 0, 0, 0, 0, 1],
+    });
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      neighborRadius: 0.6,
+    });
+    mgr.watch([bh(1), bh(2)], buf);
+    mgr.sweep(0);
+    setPose(buf, 2, 5, 0, 0, 0, 0, 0, 1);
+    mgr.sweep(2);
+    expect(slept).toEqual([]);
+  });
+
+  it('treats a NaN previous sample as non-quiet and skips a missing offset', () => {
+    const offsets = new Map<number, number | undefined>([
+      [1, 0],
+      [2, undefined],
+    ]);
+    const transforms = new Float32Array(14);
+    transforms[6] = 1;
+    transforms[13] = 1;
+    const { world, slept } = mockSleepWorld();
+    const buffer = {
+      offsetOf: (b: BodyHandle) => offsets.get(b) as number | undefined,
+      transforms,
+    };
+    const mgr = new SleepManager(world, {
+      settleSteps: 0,
+      sweepIntervalSec: 2,
+      moveThreshold: 0.01,
+      neighborRadius: 0.6,
+    });
+    mgr.watch([bh(1), bh(2)], buffer);
+    mgr.sweep(0); // body 2 sampled as NaN (missing offset)
+    offsets.set(2, 7); // slot appears next sweep — previous sample is NaN → non-quiet
+    mgr.sweep(2);
+    expect(slept).toEqual([]);
+  });
 });
+
+function mockSleepWorld(awake?: Map<number, number>) {
+  const slept: number[] = [];
+  const world = {
+    sleepBody: (b: BodyHandle) => slept.push(b),
+    readSleepStates: (ids: Int32Array, out: Uint8Array) => {
+      for (let i = 0; i < ids.length; i++) out[i] = awake?.get(ids[i]) ?? 1;
+      return out;
+    },
+  };
+  return { world, slept };
+}
+
+function poseBuffer(poses: Record<number, readonly number[]>) {
+  const ids = Object.keys(poses).map(Number);
+  const transforms = new Float32Array(ids.length * 7);
+  const offsets = new Map<number, number>();
+  ids.forEach((id, i) => {
+    const o = i * 7;
+    offsets.set(id, o);
+    const p = poses[id];
+    for (let k = 0; k < 7; k++) transforms[o + k] = p[k] ?? (k === 6 ? 1 : 0);
+  });
+  return {
+    transforms,
+    offsetOf: (b: BodyHandle) => offsets.get(b),
+  };
+}
+
+function setPose(
+  buf: { transforms: Float32Array; offsetOf: (b: BodyHandle) => number | undefined },
+  id: number,
+  x: number,
+  y: number,
+  z: number,
+  qx: number,
+  qy: number,
+  qz: number,
+  qw: number,
+): void {
+  const o = buf.offsetOf(bh(id));
+  if (o === undefined) return;
+  buf.transforms[o] = x;
+  buf.transforms[o + 1] = y;
+  buf.transforms[o + 2] = z;
+  buf.transforms[o + 3] = qx;
+  buf.transforms[o + 4] = qy;
+  buf.transforms[o + 5] = qz;
+  buf.transforms[o + 6] = qw;
+}
 
 describe('BodyPool (experimental)', () => {
   it('caps the pool and evicts the oldest', () => {

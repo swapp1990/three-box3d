@@ -495,6 +495,13 @@ export interface SleepManagerOptions {
   settleSteps?: number;       // steps to let a fresh spawn settle, default 2
   sweepIntervalSec?: number;  // periodic sweep cadence, default 2 s
   moveThreshold?: number;     // per-sweep displacement to still count as "moving", default 0.01 m
+  /** Per-sweep quaternion displacement. Quiet iff posDelta² < moveThreshold²
+   *  AND 1-|dot(qPrev,qNow)| < angleThreshold. Unset → rotation ignored (legacy). */
+  angleThreshold?: number;
+  /** Cluster-gated sleeping. Union-find over currently-awake watched bodies
+   *  whose centers are within this radius; `sleepBody` only for clusters where
+   *  every member is quiet. Unset → per-body sweep (legacy). */
+  neighborRadius?: number;
 }
 export class SleepManager {
   constructor(world: World, options?: SleepManagerOptions);
@@ -506,6 +513,8 @@ export class SleepManager {
   sweep(simTime: number): void;
 }
 ```
+
+`sleepBody` is island-granular: the engine's `b3Body_SetAwake(false)` calls `b3TrySleepIsland`, which moves the body's entire contact island into the sleeping set without looking at other members' velocities. A brick whose center drifted <1 cm (or that is only rotating in place) would freeze a whole moving rubble pile. `angleThreshold` treats in-place toppling as motion. `neighborRadius` makes the sweep refuse to sleep a still body that still has an awake, moving neighbor — the spatial cluster is a cheap stand-in for the contact island, O(n) via a hash grid. Both fields default off so existing call sites (sleeping-city, wrecking-yard, worldcup) stay bit-identical.
 
 #### `radialImpulse`
 ```ts
