@@ -336,6 +336,11 @@ export type {
 };
 
 export { DEFAULT_HULL_MAX_VERTICES, HULL_MAX_VERTICES_LIMIT };
+export {
+  MAX_NATIVE_GENERATION,
+  MAX_NATIVE_SHAPE_INDEX,
+  MAX_NATIVE_WORLDS,
+} from './limits.js';
 
 // Helper modules (tree-shakeable named exports; none imports three).
 export { FixedStepper, type FixedStepperOptions, type FixedStepperTelemetry } from './helpers/fixed-step.js';
@@ -354,3 +359,18 @@ export {
   type ArticulatedPoseOptions,
   type ArticulatedPoseResult,
 } from './helpers/articulated-pose.js';
+export {
+  createIdentitySystem,
+  sameIdentity,
+  type Identity,
+  type IdentityMintScope,
+  type IdentityParentOf,
+  type IdentityScope,
+  type IdentitySystem,
+} from './helpers/identity.js';
+export type {
+  SceneCommandEnvelope,
+  SceneCommandPolicy,
+  SceneContactBatch,
+  SceneParticipant,
+} from './helpers/scene-participant.js';

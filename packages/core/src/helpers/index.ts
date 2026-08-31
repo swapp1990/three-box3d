@@ -15,3 +15,18 @@ export {
   type ArticulatedPoseOptions,
   type ArticulatedPoseResult,
 } from './articulated-pose.js';
+export {
+  createIdentitySystem,
+  sameIdentity,
+  type Identity,
+  type IdentityMintScope,
+  type IdentityParentOf,
+  type IdentityScope,
+  type IdentitySystem,
+} from './identity.js';
+export type {
+  SceneCommandEnvelope,
+  SceneCommandPolicy,
+  SceneContactBatch,
+  SceneParticipant,
+} from './scene-participant.js';
