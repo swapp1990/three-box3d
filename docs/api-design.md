@@ -939,3 +939,82 @@ malloc/free = 63).
 - **New `Capabilities` fields (add-only):** `contactShapeIdentity`
   (shape-aware contact drains + `getShapeIdentity`), `aabbOverlap`
   (`overlapAABB` / `overlapAABBInto`).
+
+## 9. Addendum — scene-composition helpers (2026-08)
+
+Additive-only, opt-in helpers under `box3d-web/helpers`. They do not change the
+frozen `World` method-bag, do not introduce a scene mirror, and are not
+imported by the WASM core. Existing v0.1 signatures in §1–§8 are unchanged.
+
+Multi-structure scenes need four things the handle-bag does not provide:
+deterministic identity (replayable keys, generation-safe across a reset),
+generation-safe routing from native shape identity to a caller-supplied
+address, one fixed-step authority over a shared `World`, and atomic
+native-plus-semantic creation so a failed spawn cannot leak a live body or a
+stale registry entry. These helpers supply that composition layer. They are
+composable and tree-shakeable — import only what you use, including via the
+`box3d-web/helpers` subpath — which is the §1 helper contract applied to
+scene composition rather than a god-object on `World`.
+
+- **`createIdentitySystem` / `sameIdentity`.** Caller-owned identity minting.
+  An ordinal is an input, not a module-global counter; replaying the same
+  scope, generation, and ordinals yields byte-for-byte equal keys, and a
+  recycled scope gets a different generation key. The kind hierarchy
+  (`kinds` + `parentOf`) is supplied by the caller.
+
+- **`SceneParticipant` contract.** Something a shared-world scheduler can
+  step, command, and reset. The participant holds a `World` handle-bag plus
+  its own `participantKey` / `revision`; the scheduler never infers ownership
+  from a scene graph. Command `type` is an opaque string. Unknown command
+  types — including types for which `sceneCommandPolicy` is unimplemented —
+  are treated as `critical`.
+
+- **`createEntityRegistry`.** Instance-local semantic routing for Box3D
+  handles. The registry does not allocate or recycle handles: Box3D remains
+  the source of stable `ShapeIdentity`; raw shape handles are lifecycle
+  metadata; raw body handles remain temporary routing keys. Callers supply
+  `addressKey` and optional `groupKey` / `addressWorldKey`. The registry
+  never interprets address fields itself. Duplicate body/shape registration
+  throws without removing the pre-existing valid entry.
+
+- **`createSceneRuntime`.** One `FixedStepper` over one shared `World` and
+  any number of `SceneParticipant` instances. Per fixed step: apply due
+  commands → one `world.step(fixedDt, substeps)` → one shape-aware triple
+  drain → freeze the batch → fan to participants sorted by `participantKey`.
+  **Reset barrier:** `reset()` drains all three native shape-aware contact
+  queues (begin, end, and hit) so stale shape/body handles sitting in those
+  queues can never be interpreted against replacement bodies on the next
+  tick. The drain is not optional and runs even when no participants are
+  attached.
+
+- **`spawnRegistered` / `createRegistrationHost`.** Transactional native +
+  semantic creation. `spawnRegistered(world, registry, { body, shapes, bodyAddress })`
+  creates the body, adds one or more shapes (`box` / `sphere` / `capsule` /
+  `sensorBox` / `hull`), reads identities, then registers body and shapes.
+  A `bodyRegistered` flag drives rollback that **unregisters then destroys**,
+  so a failure at any step restores the native body/shape counts and the
+  registry exactly. `createRegistrationHost` is the boundary for bodies
+  created elsewhere: `registerShape` unregisters the body on failure so an
+  outer native transaction can destroy exactly once. A duplicate-handle
+  error on `registerBody` must **never** remove a pre-existing valid
+  registration.
+
+- **`src/limits.ts` constants.** Canonical native limits, re-exported from
+  `box3d-web`: `MAX_NATIVE_SHAPE_INDEX` (`1 << 22`), `MAX_NATIVE_WORLDS`
+  (128, matching `B3BRIDGE_MAX_WORLDS`), `MAX_NATIVE_GENERATION` (`0xffff`,
+  native `uint16`). Import these instead of duplicating magic numbers.
+
+**Non-goals.** These helpers are not a scene graph, not a `Body` class, not a
+per-entity reactive wrapper, and not a bake-in of scene state onto `World`.
+They do not interpret domain addresses, do not schedule rendering, and do
+not implement destruction gameplay. `World` stays a handle-bag.
+
+**Not upstreamed** — the following live in consumer apps and are not part of
+box3d-web:
+
+- damage semantics / damage context
+- fragment-fate accounting
+- structure adapters / page sessions
+- domain event rings
+- comminution
+- invariant monitors

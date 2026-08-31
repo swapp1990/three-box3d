@@ -391,3 +391,16 @@ export {
   type SceneRuntimeOptions,
   type SceneRuntimeTelemetry,
 } from './helpers/scene-runtime.js';
+export {
+  createRegistrationHost,
+  RegistrationHost,
+  spawnRegistered,
+  type RegistrationHostOptions,
+  type RegistrationHostSnapshot,
+  type RegistrationWorld,
+  type SpawnedShape,
+  type SpawnRegisteredOptions,
+  type SpawnRegisteredResult,
+  type SpawnShapeSpec,
+  type SpawnWorld,
+} from './helpers/transactional-spawn.js';
