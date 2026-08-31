@@ -337,18 +337,6 @@ export interface RaycastHit {
 /** Closest hit along the ray `origin → origin + dir` (dir carries max distance).
  *  Returns `null` on no hit — this is the one query that legitimately misses. */
 castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null;
-
-export interface AABBOverlapResult {
-  body: BodyHandle;
-  /** Generation-safe outer shape identity; compound child indices are not exposed. */
-  shape: ShapeIdentity;
-}
-/** Find shapes whose broad-phase bounds potentially overlap the world-space
- * AABB. Native callback order is unspecified. */
-overlapAABB(lowerBound: Vec3, upperBound: Vec3): AABBOverlapResult[];
-/** Writes [bodyHandle, shape.index1, shape.world0, shape.generation] tuples and
- * returns the total match count, which may exceed `out.length / 4`. */
-overlapAABBInto(lowerBound: Vec3, upperBound: Vec3, out: Float32Array): number;
 ```
 
 ### 2.8 Events
@@ -358,33 +346,6 @@ export interface ContactBeginEvent {
   bodyA: BodyHandle;
   bodyB: BodyHandle;
   /** Approach speed at contact (m/s) — use for impact-scaled VFX/sound. */
-  approachSpeed: number;
-}
-/** Native generation-safe shape identity. Scoped to the Box3D module/world;
- * `generation` is uint16 and may wrap after sufficiently many slot lifetimes. */
-export interface ShapeIdentity {
-  readonly index1: number;
-  readonly world0: number;
-  readonly generation: number;
-}
-export interface ContactBeginEventWithShapes extends ContactBeginEvent {
-  shapeA: ShapeIdentity;
-  shapeB: ShapeIdentity;
-}
-export interface ContactEndEventWithShapes {
-  bodyA: BodyHandle;
-  bodyB: BodyHandle;
-  /** Identity remains available when the ended shape was destroyed already. */
-  shapeA: ShapeIdentity;
-  shapeB: ShapeIdentity;
-}
-export interface ContactHitEventWithShapes {
-  bodyA: BodyHandle;
-  bodyB: BodyHandle;
-  shapeA: ShapeIdentity;
-  shapeB: ShapeIdentity;
-  point: Readonly<{ x: number; y: number; z: number }>;
-  normal: Readonly<{ x: number; y: number; z: number }>;
   approachSpeed: number;
 }
 export interface SensorEvent {
@@ -406,27 +367,6 @@ drainSensorEvents(): SensorEvent[];
  */
 drainContactBeginEventsInto(out: Float32Array): number; // tuple = [bodyA, bodyB, approachSpeed]
 drainSensorEventsInto(out: Int32Array): number;         // tuple = [sensor, other]
-
-/** Shape-aware drains use one shared queue per event kind with the legacy
- * methods above. Calling either projection consumes the event. They require
- * `Capabilities.contactShapeIdentity`; old WASM builds throw rather than
- * returning fabricated identities. */
-drainContactBeginEventsWithShapes(): ContactBeginEventWithShapes[];
-drainContactEndEventsWithShapes(): ContactEndEventWithShapes[];
-drainContactHitEventsWithShapes(): ContactHitEventWithShapes[];
-drainContactBeginEventsWithShapesInto(out: Float32Array): number;
-drainContactEndEventsWithShapesInto(out: Float32Array): number;
-drainContactHitEventsWithShapesInto(out: Float32Array): number;
-getShapeIdentity(shape: ShapeHandle): ShapeIdentity | null;
-
-// ShapeHandle is lifecycle-local and its integer slot may be reused. Retain
-// ShapeIdentity for event routing; an old raw handle can name a newer shape
-// after reuse. ShapeIdentity itself is scoped to this live module/world.
-
-// Detailed `...WithShapesInto` tuple layouts:
-// begin [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation,approachSpeed]
-// end   [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation]
-// hit   [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation,px,py,pz,nx,ny,nz,approachSpeed]
 ```
 
 > **Draining contract (frozen):** events **accumulate until drained** — nothing is
@@ -463,10 +403,6 @@ export interface Capabilities {
   angularVelocity: boolean;
   forces: boolean;
   setBodyTransform: boolean;
-  /** Default-filter `overlapAABB` / `overlapAABBInto`. */
-  aabbOverlap: boolean;
-  /** Shape-aware contact drains and `getShapeIdentity`. */
-  contactShapeIdentity: boolean;
   bodyInertia: boolean;  // local diagonal rotational-inertia telemetry
   setBodyInertia: boolean; // local diagonal override; preserves mass/center
   /** Open-ended probe for features added after these typings were published. */
@@ -787,7 +723,7 @@ Deferred to **v0.5**:
   variants ship in v0.1, but the object-returning drain stays the documented default
   until v0.5).
 - Raycast `normal` / `shape` / `fraction` fields (bridge returns only hit+body+point today).
-- Multi-hit / shape-cast / overlap queries.
+- Multi-hit / shape-cast / overlap queries. [default-filter AABB overlap landed in §8]
 - DEV-only world-tagged handles that throw on cross-world misuse (see §2.2 footgun).
 - `BodyPool` API freeze (experimental in v0.1; `spawn` shape may be revised).
 
@@ -902,3 +838,104 @@ the textbook building block for an active ragdoll's joint drives.
   compatibility note above).
 - **New `Capabilities` fields (add-only):** `jointMotors` (creation-time
   `motor` option + both runtime setters), `filterJoint` (`createFilterJoint`).
+
+## 8. Addendum — shape identity, AABB overlap, registry atomicity (2026-08)
+
+Additive-only surface added after the frozen sign-off above. Existing v0.1
+signatures are unchanged; new methods degrade via `Capabilities` on older
+builds. Ground truth is `native/expected-exports.txt` (61 `b3bridge_*` +
+malloc/free = 63).
+
+- **`ShapeIdentity`.** Generation-safe native shape identity
+  `{ readonly index1, world0, generation }`, scoped to the live Box3D
+  module/world. `generation` is a native uint16 and may wrap after
+  sufficiently many slot lifetimes. `ShapeHandle` remains lifecycle-local —
+  its integer slot may be reused, so an old raw handle can name a newer
+  shape. Retain `ShapeIdentity` for event routing.
+
+- **`World.getShapeIdentity(shape): ShapeIdentity | null`.** Identity of the
+  shape currently occupying an active handle slot. Returns `null` for an
+  inactive or invalid handle (native writes three zeroes). Requires
+  `Capabilities.contactShapeIdentity`; `assertShapeIdentityAvailable` throws
+  on older WASM builds rather than fabricating identities.
+
+- **Shape-aware contact drains.** Additive counterparts that include both
+  participant identities: `drainContactBeginEventsWithShapes` /
+  `drainContactEndEventsWithShapes` /
+  `drainContactHitEventsWithShapes`, and
+  `drainContactBeginEventsWithShapesInto` /
+  `drainContactEndEventsWithShapesInto` /
+  `drainContactHitEventsWithShapesInto`. End-event identities remain
+  available even when the ended shape was already destroyed. All six require
+  `Capabilities.contactShapeIdentity` and throw on older builds (same guard
+  as `getShapeIdentity`). Return types: `ContactBeginEventWithShapes`
+  (extends frozen `ContactBeginEvent` with `shapeA`/`shapeB`),
+  `ContactEndEventWithShapes`, `ContactHitEventWithShapes`.
+
+- **Shared-queue design.** There is **one JS queue per event kind**. On a
+  shape-aware build the queues store the detailed native tuples; the frozen
+  legacy drains project the old layout out of the same queue (begin keeps
+  `[bodyA, bodyB, approachSpeed]`, dropping identities). Calling either
+  projection **consumes** the event — a caller cannot double-drain the same
+  semantic event by mixing legacy and `WithShapes` APIs in one frame. Older
+  WASM builds keep the original short-tuple read path (begin stride 3, end
+  stride 2, hit stride 9).
+
+- **`…WithShapesInto` tuple layouts** (return the true accumulated count,
+  which may exceed the buffer's tuple capacity, and empty the shared queue):
+  - begin stride 9: `[bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0, b.generation, approachSpeed]`
+  - end stride 8: `[bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0, b.generation]`
+  - hit stride 15: `[bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0, b.generation, px, py, pz, nx, ny, nz, approachSpeed]`
+
+- **`World.overlapAABB(lowerBound, upperBound): AABBOverlapResult[]` /
+  `overlapAABBInto(..., out): number`.** Default-filter broad-phase AABB
+  query (the overlap slice of the §5 deferral). Each result is
+  `{ body, shape }` — `shape` is the generation-safe outer `ShapeIdentity`;
+  compounds contribute their outer shape only (no child index). Native
+  callback order is unspecified. Gated by `Capabilities.aabbOverlap`; older
+  builds throw. `overlapAABB` grows a scratch buffer in a retry loop until
+  it captures the true total. `overlapAABBInto` writes
+  `[bodyHandle, shape.index1, shape.world0, shape.generation]` tuples,
+  returns the true total (which may exceed `out.length / 4`), and uses a
+  `writesDirect` fast path when `out` is already WASM-heap-backed.
+
+- **`FixedStepper.stepOnce(onStep)` / `telemetry()`.** Additive helpers on
+  the frozen `FixedStepper`. `stepOnce` executes exactly one fixed step and
+  does **not** consume the frame accumulator — for callers that own a shared
+  accumulator/world and need each participant's logical clock to advance
+  with that world. `telemetry()` returns a frozen `FixedStepperTelemetry`
+  snapshot: `simTime`, `accumulator`, `totalExecutedSteps`,
+  `droppedBacklogTime`, `droppedBacklogSteps`, `maxStepsPerFrame`. Existing
+  `advance` / `simTime` / `reset` are unchanged.
+
+- **Native registry atomicity.** `Bridge_AllocWorld` / `Bridge_AllocBody` /
+  `Bridge_AllocShape` / `Bridge_AllocJoint` return 0 when the registry is
+  full. Create paths then destroy the native object (`b3DestroyWorld` /
+  `b3DestroyBody` / `b3DestroyShape` / `b3DestroyJoint`) so a failed
+  registration cannot leak a live native world/body/shape/joint. Registry
+  caps are `#ifndef`-overridable: `B3BRIDGE_MAX_WORLDS` 128,
+  `B3BRIDGE_MAX_BODIES` 8192, `B3BRIDGE_MAX_SHAPES` 16384,
+  `B3BRIDGE_MAX_JOINTS` 8192. The native exhaustion harness
+  (`native/test/bridge_exhaustion_test.c`, driven by
+  `native/scripts/test-bridge-exhaustion.sh`) redefines those caps to 2 and
+  `#include`s `bridge.c` so it can assert rollback without a production
+  diagnostic export.
+
+- **SIMD-promoted-default WASM.** `native/scripts/build-wasm.sh` with no
+  `--variant` now compiles SIMD (`-msimd128 -msse2`) into the legacy
+  `native/dist/box3d.wasm` consumed by packages. Named artifacts:
+  `box3d.compat.wasm` (scalar, `-DBOX3D_DISABLE_SIMD`) and
+  `box3d.simd.wasm`. `--variant all` builds both named artifacts without
+  overwriting the legacy file, and verifies **export parity** — both expose
+  the same runtime exports.
+
+- **New bridge exports:** `b3bridge_get_shape_identity`,
+  `b3bridge_drain_contact_begin_events_with_shapes`,
+  `b3bridge_drain_contact_end_events_with_shapes`,
+  `b3bridge_drain_contact_hit_events_with_shapes`,
+  `b3bridge_overlap_aabb`. Existing event-drain exports and their tuple
+  layouts are unchanged.
+
+- **New `Capabilities` fields (add-only):** `contactShapeIdentity`
+  (shape-aware contact drains + `getShapeIdentity`), `aabbOverlap`
+  (`overlapAABB` / `overlapAABBInto`).
