@@ -44,6 +44,11 @@
 #
 # Convex hull shape from a point cloud adds 1 more wrapper:
 # add_hull_shape — for 56 bridge exports and 58 total including malloc/free.
+# Additive shape identity/contact event exports add 4 bridge functions, for 60
+# bridge exports and 62 total including malloc/free. Existing event exports and
+# tuple layouts remain unchanged.
+# The default-filter AABB overlap query adds one additive bridge function, for
+# 61 bridge exports and 63 total including malloc/free.
 
 _malloc
 _free
@@ -69,8 +74,11 @@ _b3bridge_destroy_body
 _b3bridge_destroy_world
 _b3bridge_destroyJoint
 _b3bridge_drain_contact_begin_events
+_b3bridge_drain_contact_begin_events_with_shapes
 _b3bridge_drain_contact_end_events
+_b3bridge_drain_contact_end_events_with_shapes
 _b3bridge_drain_contact_hit_events
+_b3bridge_drain_contact_hit_events_with_shapes
 _b3bridge_drain_sensor_events
 _b3bridge_explode
 _b3bridge_get_awake_body_count
@@ -79,6 +87,7 @@ _b3bridge_get_body_count
 _b3bridge_get_linear_velocity
 _b3bridge_get_revolute_motor_torque
 _b3bridge_get_spherical_motor_torque
+_b3bridge_get_shape_identity
 _b3bridge_getAngularVelocity
 _b3bridge_getAngularDamping
 _b3bridge_getBodyInertia
@@ -87,6 +96,7 @@ _b3bridge_getBodyType
 _b3bridge_getGravityScale
 _b3bridge_getLinearDamping
 _b3bridge_isBodyAwake
+_b3bridge_overlap_aabb
 _b3bridge_read_transforms
 _b3bridge_set_awake
 _b3bridge_set_body_type

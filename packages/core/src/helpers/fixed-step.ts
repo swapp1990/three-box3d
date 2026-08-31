@@ -15,6 +15,18 @@ export interface FixedStepperOptions {
   maxStepsPerFrame?: number; // death-spiral guard, default 3 (drops backlog via modulo)
 }
 
+/** Immutable timing/overflow counters for diagnostics and shared-world schedulers. */
+export interface FixedStepperTelemetry {
+  readonly simTime: number;
+  readonly accumulator: number;
+  readonly totalExecutedSteps: number;
+  /** Time discarded when the catch-up budget drops whole fixed steps. */
+  readonly droppedBacklogTime: number;
+  /** Whole fixed steps represented by `droppedBacklogTime`. */
+  readonly droppedBacklogSteps: number;
+  readonly maxStepsPerFrame: number;
+}
+
 export class FixedStepper {
   readonly fixedDt: number;
   readonly substeps: number;
@@ -23,6 +35,9 @@ export class FixedStepper {
   private maxStepsPerFrame: number;
   private accumulator = 0;
   private _simTime = 0;
+  private totalExecutedSteps = 0;
+  private droppedBacklogTime = 0;
+  private droppedBacklogSteps = 0;
 
   constructor(options: FixedStepperOptions = {}) {
     this.fixedDt = options.fixedDt && options.fixedDt > 0 ? options.fixedDt : 1 / 60;
@@ -58,6 +73,15 @@ export class FixedStepper {
   }
 
   /**
+   * Execute exactly one fixed step without consuming or changing the frame
+   * accumulator. This is useful when a caller owns a shared accumulator/world
+   * and needs each participant's logical clock to advance with that world.
+   */
+  stepOnce(onStep: (dt: number) => void): void {
+    this.executeStep(onStep);
+  }
+
+  /**
    * Feed a frame delta; runs 0..maxStepsPerFrame fixed steps via `onStep`.
    * Returns how many steps ran (0 = no visual change needed this frame).
    */
@@ -71,16 +95,40 @@ export class FixedStepper {
 
     let steps = 0;
     while (this.accumulator >= this.fixedDt && steps < this.maxStepsPerFrame) {
-      onStep(this.fixedDt);
-      this._simTime += this.fixedDt;
+      this.executeStep(onStep);
       this.accumulator -= this.fixedDt;
       steps += 1;
     }
     // Anti-death-spiral: drop any remaining backlog beyond one step.
     if (this.accumulator >= this.fixedDt) {
-      this.accumulator %= this.fixedDt;
+      const retained = this.accumulator % this.fixedDt;
+      const dropped = this.accumulator - retained;
+      this.accumulator = retained;
+      this.droppedBacklogTime += dropped;
+      // The modulo operation leaves a whole-step quotient, subject only to
+      // floating-point noise. Round that quotient so the counter remains an
+      // exact integer for fixed dt values such as 1/60.
+      this.droppedBacklogSteps += Math.max(0, Math.round(dropped / this.fixedDt));
     }
     return steps;
+  }
+
+  /** Snapshot counters without exposing mutable internal state. */
+  telemetry(): FixedStepperTelemetry {
+    return Object.freeze({
+      simTime: this._simTime,
+      accumulator: this.accumulator,
+      totalExecutedSteps: this.totalExecutedSteps,
+      droppedBacklogTime: this.droppedBacklogTime,
+      droppedBacklogSteps: this.droppedBacklogSteps,
+      maxStepsPerFrame: this.maxStepsPerFrame,
+    });
+  }
+
+  private executeStep(onStep: (dt: number) => void): void {
+    onStep(this.fixedDt);
+    this._simTime += this.fixedDt;
+    this.totalExecutedSteps += 1;
   }
 
   /** Total simulated time (s), monotone in fixed increments. */
@@ -91,5 +139,8 @@ export class FixedStepper {
   reset(): void {
     this.accumulator = 0;
     this._simTime = 0;
+    this.totalExecutedSteps = 0;
+    this.droppedBacklogTime = 0;
+    this.droppedBacklogSteps = 0;
   }
 }

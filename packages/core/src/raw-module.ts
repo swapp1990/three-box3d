@@ -7,8 +7,9 @@
  * the contract between the loader and that API, and the single place export
  * signatures are pinned.
  *
- * Ground truth for the export list is `native/expected-exports.txt` (58 exports:
- * 56 `b3bridge_*` + `_malloc`/`_free`). Shape-add functions return `int` (a
+ * Ground truth for the export list is `native/expected-exports.txt` (63 exports:
+ * 61 `b3bridge_*` + `_malloc`/`_free`, including additive shape-identity
+ * contact drains and the default-filter AABB query). Shape-add functions return `int` (a
  * ShapeHandle), NOT void — this was a documented bug in the old repo's `.d.ts`.
  *
  * Pointers are WASM linear-memory byte offsets (`number`). All floats are f32 on
@@ -187,6 +188,16 @@ export interface Box3DExports {
     dx: number, dy: number, dz: number,
     outHit: Ptr,
   ): void;
+  /** Optional default-filter AABB overlap. Writes 4-float tuples
+   * [bodyHandle, shape.index1, shape.world0, shape.generation] and returns
+   * the total matching count, which may exceed capacity. */
+  b3bridge_overlap_aabb?: (
+    worldHandle: number,
+    lowerX: number, lowerY: number, lowerZ: number,
+    upperX: number, upperY: number, upperZ: number,
+    outResults: Ptr,
+    capacity: number,
+  ) => number;
 
   // --- explode (present but no-ops on sleeping bodies — see radialImpulse) ---
   b3bridge_explode(
@@ -219,11 +230,32 @@ export interface Box3DExports {
 
   // --- events (return total accumulated count; may exceed capacity) ---
   b3bridge_drain_contact_begin_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+  /** Optional additive shape-aware begin tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation, approachSpeed]. */
+  b3bridge_drain_contact_begin_events_with_shapes?:
+    (worldHandle: number, outEvents: Ptr, capacity: number) => number;
   /** Tuple layout: [bodyA, bodyB] per event. */
   b3bridge_drain_contact_end_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+  /** Optional additive shape-aware end tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation]. */
+  b3bridge_drain_contact_end_events_with_shapes?:
+    (worldHandle: number, outEvents: Ptr, capacity: number) => number;
   /** Tuple layout: [bodyA, bodyB, px, py, pz, nx, ny, nz, approachSpeed]. */
   b3bridge_drain_contact_hit_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+  /** Optional additive shape-aware hit tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation, px, py, pz, nx, ny, nz, approachSpeed]. */
+  b3bridge_drain_contact_hit_events_with_shapes?:
+    (worldHandle: number, outEvents: Ptr, capacity: number) => number;
   b3bridge_drain_sensor_events(worldHandle: number, outEvents: Ptr, capacity: number): number;
+
+  /** Optional. Writes [index1, world0, generation] for the shape currently in
+   *  an active ShapeHandle slot; writes zeroes for an inactive/invalid slot.
+   *  Raw ShapeHandle integers remain reusable, so callers retain the returned
+   *  identity rather than treating the handle itself as stable identity. */
+  b3bridge_get_shape_identity?: (shapeHandle: number, outIdentity: Ptr) => void;
 
   /** Writes 2 floats: [pointCount, totalNormalImpulse]. Invalid body → zeros. */
   b3bridge_get_body_contact_load(bodyHandle: number, outResult: Ptr): void;

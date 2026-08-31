@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Box3D, World } from '../src/index.js';
+import type { Box3D, ShapeIdentity, World } from '../src/index.js';
 import { probeCapabilities } from '../src/index.js';
 import { buildDropScene, freshBox3D } from './helpers.js';
 
@@ -12,6 +12,10 @@ beforeEach(async () => {
 afterEach(() => {
   b3.dispose();
 });
+
+function sameShapeIdentity(a: ShapeIdentity, b: ShapeIdentity): boolean {
+  return a.index1 === b.index1 && a.world0 === b.world0 && a.generation === b.generation;
+}
 
 describe('World lifecycle & bodies', () => {
   it('honors full-vector gravity at world creation', () => {
@@ -60,6 +64,66 @@ describe('World lifecycle & bodies', () => {
     const shape = world.addBox(body, [0.5, 0.5, 0.5], { friction: 0.6, restitution: 0 });
     expect(() => world.setShapeFriction(shape, 0.1)).not.toThrow();
     expect(() => world.setShapeRestitution(shape, 0.9)).not.toThrow();
+    world.destroy();
+  });
+
+  it('AABB overlap reports exact live body/shape identities', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0], enableSleep: false });
+    const available = probeCapabilities(world).aabbOverlap;
+    const target = world.createBody({ type: 'static', position: [0, 0, 0] });
+    const targetShape = world.addBox(target, [1, 1, 1]);
+    const nearby = world.createBody({ type: 'dynamic', position: [0.5, 0, 0] });
+    const nearbyShape = world.addSphere(nearby, 0.4, { density: 1 });
+    if (!available) {
+      expect(() => world.overlapAABB([-2, -2, -2], [2, 2, 2])).toThrow(/aabbOverlap/);
+      world.destroy();
+      return;
+    }
+    const targetIdentity = world.getShapeIdentity(targetShape);
+    const nearbyIdentity = world.getShapeIdentity(nearbyShape);
+    expect(targetIdentity).not.toBeNull();
+    expect(nearbyIdentity).not.toBeNull();
+    const results = world.overlapAABB([-2, -2, -2], [2, 2, 2]);
+    expect(results).toHaveLength(2);
+    expect(results.some((result) => result.body === target && sameShapeIdentity(result.shape, targetIdentity!))).toBe(true);
+    expect(results.some((result) => result.body === nearby && sameShapeIdentity(result.shape, nearbyIdentity!))).toBe(true);
+    world.destroy();
+  });
+
+  it('AABB overlap returns no results for a disjoint query', () => {
+    const world = b3.createWorld();
+    if (!probeCapabilities(world).aabbOverlap) {
+      world.destroy();
+      return;
+    }
+    const body = world.createBody({ type: 'static', position: [0, 0, 0] });
+    world.addBox(body, [1, 1, 1]);
+    expect(world.overlapAABB([10, 10, 10], [12, 12, 12])).toEqual([]);
+    world.destroy();
+  });
+
+  it('AABB overlap Into exposes total count when capacity truncates writes', () => {
+    const world = b3.createWorld({ gravity: [0, 0, 0], enableSleep: false });
+    if (!probeCapabilities(world).aabbOverlap) {
+      world.destroy();
+      return;
+    }
+    const bodyA = world.createBody({ type: 'static', position: [-0.5, 0, 0] });
+    const shapeA = world.addBox(bodyA, [0.5, 0.5, 0.5]);
+    const bodyB = world.createBody({ type: 'dynamic', position: [0.5, 0, 0] });
+    const shapeB = world.addBox(bodyB, [0.5, 0.5, 0.5], { density: 1 });
+    const idA = world.getShapeIdentity(shapeA);
+    const idB = world.getShapeIdentity(shapeB);
+    expect(idA).not.toBeNull();
+    expect(idB).not.toBeNull();
+    const out = new Float32Array(4);
+    const total = world.overlapAABBInto([-2, -2, -2], [2, 2, 2], out);
+    expect(total).toBeGreaterThan(1);
+    expect([bodyA, bodyB]).toContain(out[0]);
+    const writtenIdentity = { index1: out[1], world0: out[2], generation: out[3] };
+    expect(
+      sameShapeIdentity(writtenIdentity, idA!) || sameShapeIdentity(writtenIdentity, idB!),
+    ).toBe(true);
     world.destroy();
   });
 

@@ -5,10 +5,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#ifndef B3BRIDGE_MAX_WORLDS
 #define B3BRIDGE_MAX_WORLDS 128
+#endif
+#ifndef B3BRIDGE_MAX_BODIES
 #define B3BRIDGE_MAX_BODIES 8192
+#endif
+#ifndef B3BRIDGE_MAX_SHAPES
 #define B3BRIDGE_MAX_SHAPES 16384
+#endif
+#ifndef B3BRIDGE_MAX_JOINTS
 #define B3BRIDGE_MAX_JOINTS 8192
+#endif
 
 typedef struct BridgeWorldSlot
 {
@@ -162,6 +170,30 @@ static bool Bridge_SameShapeId( b3ShapeId a, b3ShapeId b )
 	return a.index1 == b.index1 && a.world0 == b.world0 && a.generation == b.generation;
 }
 
+// Native shape IDs are generation-safe within their Box3D module/world. Keep
+// the fields split in the float ABI: each field is an integer well below the
+// exact-in-f32 range, while packing the 64-bit ID into one float would lose
+// identity information.
+static void Bridge_WriteShapeIdentity( float* out, b3ShapeId id )
+{
+	if ( out == NULL )
+	{
+		return;
+	}
+
+	if ( B3_IS_NULL( id ) )
+	{
+		out[0] = 0.0f;
+		out[1] = 0.0f;
+		out[2] = 0.0f;
+		return;
+	}
+
+	out[0] = (float)id.index1;
+	out[1] = (float)id.world0;
+	out[2] = (float)id.generation;
+}
+
 static int Bridge_FindBodyHandle( b3BodyId id )
 {
 	if ( B3_IS_NULL( id ) )
@@ -188,6 +220,29 @@ static int Bridge_BodyHandleFromShape( b3ShapeId shapeId )
 	}
 
 	return Bridge_FindBodyHandle( b3Shape_GetBody( shapeId ) );
+}
+
+typedef struct BridgeAABBOverlapContext
+{
+	float* outResults;
+	int capacity;
+	int count;
+} BridgeAABBOverlapContext;
+
+static bool Bridge_AABBOverlapCallback( b3ShapeId shapeId, void* context )
+{
+	BridgeAABBOverlapContext* query = (BridgeAABBOverlapContext*)context;
+	int resultIndex = query->count++;
+	if ( resultIndex < query->capacity && query->outResults != NULL )
+	{
+		float* out = query->outResults + 4 * resultIndex;
+		out[0] = (float)Bridge_BodyHandleFromShape( shapeId );
+		Bridge_WriteShapeIdentity( out + 1, shapeId );
+	}
+
+	// Keep traversing after the caller's capacity is full so the returned count
+	// exposes truncation rather than silently discarding matching shapes.
+	return true;
 }
 
 static b3ShapeDef Bridge_MakeShapeDef( float density, float friction, float restitution, float rollingResistance )
@@ -222,6 +277,37 @@ static b3Vec3 Bridge_NormalizeAxis( float x, float y, float z )
 	return (b3Vec3){ x * invLength, y * invLength, z * invLength };
 }
 
+// Returns the total number of shapes whose broad-phase bounds potentially
+// overlap the axis-aligned query box. Results are [bodyHandle, shape.index1, shape.world0,
+// shape.generation]; traversal order is intentionally unspecified and a
+// compound contributes its outer shape ID (no child index is exposed).
+int b3bridge_overlap_aabb( int worldHandle, float lowerX, float lowerY, float lowerZ,
+	float upperX, float upperY, float upperZ, float* outResults, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) ||
+		Bridge_IsFiniteFloat( lowerX ) == false || Bridge_IsFiniteFloat( lowerY ) == false ||
+		Bridge_IsFiniteFloat( lowerZ ) == false || Bridge_IsFiniteFloat( upperX ) == false ||
+		Bridge_IsFiniteFloat( upperY ) == false || Bridge_IsFiniteFloat( upperZ ) == false ||
+		lowerX > upperX || lowerY > upperY || lowerZ > upperZ )
+	{
+		return 0;
+	}
+
+	BridgeAABBOverlapContext context = {
+		outResults,
+		capacity > 0 ? capacity : 0,
+		0,
+	};
+	b3World_OverlapAABB(
+		worldId,
+		(b3AABB){ { lowerX, lowerY, lowerZ }, { upperX, upperY, upperZ } },
+		b3DefaultQueryFilter(),
+		Bridge_AABBOverlapCallback,
+		&context );
+	return context.count;
+}
+
 static float Bridge_FindApproachSpeed( b3ContactEvents events, b3ShapeId shapeIdA, b3ShapeId shapeIdB )
 {
 	for ( int i = 0; i < events.hitCount; ++i )
@@ -252,7 +338,14 @@ int b3bridge_create_world( float gravityX, float gravityY, float gravityZ, int e
 		return 0;
 	}
 
-	return Bridge_AllocWorld( worldId );
+	int worldHandle = Bridge_AllocWorld( worldId );
+	if ( worldHandle == 0 )
+	{
+		b3DestroyWorld( worldId );
+		return 0;
+	}
+
+	return worldHandle;
 }
 
 void b3bridge_destroy_world( int worldHandle )
@@ -331,7 +424,14 @@ int b3bridge_create_body( int worldHandle, int type, float x, float y, float z, 
 		return 0;
 	}
 
-	return Bridge_AllocBody( worldHandle, bodyId );
+	int bodyHandle = Bridge_AllocBody( worldHandle, bodyId );
+	if ( bodyHandle == 0 )
+	{
+		b3DestroyBody( bodyId );
+		return 0;
+	}
+
+	return bodyHandle;
 }
 
 void b3bridge_destroy_body( int bodyHandle )
@@ -366,7 +466,19 @@ int b3bridge_add_box_shape( int bodyHandle, float hx, float hy, float hz, float 
 	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3BoxHull box = b3MakeBoxHull( hx, hy, hz );
 	b3ShapeId shapeId = b3CreateHullShape( bodyId, &shapeDef, &box.base );
-	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return 0;
+	}
+
+	int shapeHandle = Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( shapeHandle == 0 )
+	{
+		b3DestroyShape( shapeId, true );
+		return 0;
+	}
+
+	return shapeHandle;
 }
 
 int b3bridge_add_sphere_shape( int bodyHandle, float radius, float density, float friction, float restitution,
@@ -381,7 +493,19 @@ int b3bridge_add_sphere_shape( int bodyHandle, float radius, float density, floa
 	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3Sphere sphere = { b3Vec3_zero, radius };
 	b3ShapeId shapeId = b3CreateSphereShape( bodyId, &shapeDef, &sphere );
-	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return 0;
+	}
+
+	int shapeHandle = Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( shapeHandle == 0 )
+	{
+		b3DestroyShape( shapeId, true );
+		return 0;
+	}
+
+	return shapeHandle;
 }
 
 int b3bridge_add_capsule_shape( int bodyHandle, float radius, float halfHeight, float density, float friction, float restitution,
@@ -396,7 +520,19 @@ int b3bridge_add_capsule_shape( int bodyHandle, float radius, float halfHeight, 
 	b3ShapeDef shapeDef = Bridge_MakeShapeDef( density, friction, restitution, rollingResistance );
 	b3Capsule capsule = { { 0.0f, -halfHeight, 0.0f }, { 0.0f, halfHeight, 0.0f }, radius };
 	b3ShapeId shapeId = b3CreateCapsuleShape( bodyId, &shapeDef, &capsule );
-	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return 0;
+	}
+
+	int shapeHandle = Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( shapeHandle == 0 )
+	{
+		b3DestroyShape( shapeId, true );
+		return 0;
+	}
+
+	return shapeHandle;
 }
 
 int b3bridge_add_sensor_box_shape( int bodyHandle, float hx, float hy, float hz )
@@ -414,7 +550,19 @@ int b3bridge_add_sensor_box_shape( int bodyHandle, float hx, float hy, float hz 
 
 	b3BoxHull box = b3MakeBoxHull( hx, hy, hz );
 	b3ShapeId shapeId = b3CreateHullShape( bodyId, &shapeDef, &box.base );
-	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( B3_IS_NULL( shapeId ) )
+	{
+		return 0;
+	}
+
+	int shapeHandle = Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( shapeHandle == 0 )
+	{
+		b3DestroyShape( shapeId, true );
+		return 0;
+	}
+
+	return shapeHandle;
 }
 
 // Create a dynamic convex hull shape from a packed float XYZ point cloud
@@ -481,7 +629,14 @@ int b3bridge_add_hull_shape( int bodyHandle, const float* points, int pointCount
 		return 0;
 	}
 
-	return Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	int shapeHandle = Bridge_AllocShape( g_bodies[bodyHandle - 1].worldHandle, bodyHandle, shapeId );
+	if ( shapeHandle == 0 )
+	{
+		b3DestroyShape( shapeId, true );
+		return 0;
+	}
+
+	return shapeHandle;
 }
 
 void b3bridge_apply_impulse( int bodyHandle, float ix, float iy, float iz, float px, float py, float pz )
@@ -578,7 +733,19 @@ int b3bridge_create_spherical_joint( int worldHandle, int bodyHandleA, int bodyH
 	}
 
 	b3JointId jointId = b3CreateSphericalJoint( worldId, &def );
-	return Bridge_AllocJoint( worldHandle, jointId );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return 0;
+	}
+
+	int jointHandle = Bridge_AllocJoint( worldHandle, jointId );
+	if ( jointHandle == 0 )
+	{
+		b3DestroyJoint( jointId, true );
+		return 0;
+	}
+
+	return jointHandle;
 }
 
 int b3bridge_create_revolute_joint( int worldHandle, int bodyHandleA, int bodyHandleB, float ax, float ay, float az,
@@ -621,7 +788,19 @@ int b3bridge_create_revolute_joint( int worldHandle, int bodyHandleA, int bodyHa
 	}
 
 	b3JointId jointId = b3CreateRevoluteJoint( worldId, &def );
-	return Bridge_AllocJoint( worldHandle, jointId );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return 0;
+	}
+
+	int jointHandle = Bridge_AllocJoint( worldHandle, jointId );
+	if ( jointHandle == 0 )
+	{
+		b3DestroyJoint( jointId, true );
+		return 0;
+	}
+
+	return jointHandle;
 }
 
 int b3bridge_create_filter_joint( int worldHandle, int bodyHandleA, int bodyHandleB )
@@ -639,7 +818,19 @@ int b3bridge_create_filter_joint( int worldHandle, int bodyHandleA, int bodyHand
 	def.base.bodyIdB = bodyB;
 
 	b3JointId jointId = b3CreateFilterJoint( worldId, &def );
-	return Bridge_AllocJoint( worldHandle, jointId );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return 0;
+	}
+
+	int jointHandle = Bridge_AllocJoint( worldHandle, jointId );
+	if ( jointHandle == 0 )
+	{
+		b3DestroyJoint( jointId, true );
+		return 0;
+	}
+
+	return jointHandle;
 }
 
 void b3bridge_set_revolute_motor( int jointHandle, int enableMotor, float motorSpeed, float maxMotorTorque )
@@ -748,7 +939,19 @@ int b3bridge_create_distance_joint_ex( int worldHandle, int bodyHandleA, int bod
 	}
 
 	b3JointId jointId = b3CreateDistanceJoint( worldId, &def );
-	return Bridge_AllocJoint( worldHandle, jointId );
+	if ( B3_IS_NULL( jointId ) )
+	{
+		return 0;
+	}
+
+	int jointHandle = Bridge_AllocJoint( worldHandle, jointId );
+	if ( jointHandle == 0 )
+	{
+		b3DestroyJoint( jointId, true );
+		return 0;
+	}
+
+	return jointHandle;
 }
 
 void b3bridge_explode( int worldHandle, float x, float y, float z, float radius, float falloff, float impulsePerArea )
@@ -971,6 +1174,106 @@ int b3bridge_drain_contact_hit_events( int worldHandle, float* outEvents, int ca
 		outEvents[9 * i + 6] = hit->normal.y;
 		outEvents[9 * i + 7] = hit->normal.z;
 		outEvents[9 * i + 8] = hit->approachSpeed;
+	}
+
+	return events.hitCount;
+}
+
+// Writes [index1, world0, generation] for the active bridge ShapeHandle.
+// An inactive/invalid bridge handle writes three zeroes. Bridge ShapeHandle
+// slots are still reusable: after reuse, the same integer names the new active
+// shape and returns that shape's identity. The returned identity is scoped to
+// this Box3D module/world; native generation is uint16 and can wrap after
+// sufficiently many slot lifetimes.
+void b3bridge_get_shape_identity( int shapeHandle, float* outIdentity )
+{
+	Bridge_WriteShapeIdentity( outIdentity, Bridge_GetShape( shapeHandle ) );
+}
+
+// Shape-aware event tuples. These are additive exports; the legacy tuple
+// layouts above remain unchanged. End events intentionally write the raw
+// native shape IDs even after a shape was destroyed, because the event may
+// outlive the shape. Body handles retain the legacy zero-for-destroyed rule.
+//
+// Begin: [bodyA, bodyB, a.index1, a.world0, a.generation,
+//         b.index1, b.world0, b.generation, approachSpeed]
+int b3bridge_drain_contact_begin_events_with_shapes( int worldHandle, float* outEvents, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return 0;
+	}
+
+	b3ContactEvents events = b3World_GetContactEvents( worldId );
+	int writeCount = events.beginCount < capacity ? events.beginCount : capacity;
+	for ( int i = 0; i < writeCount; ++i )
+	{
+		b3ContactBeginTouchEvent* event = events.beginEvents + i;
+		float* out = outEvents + 9 * i;
+		out[0] = (float)Bridge_BodyHandleFromShape( event->shapeIdA );
+		out[1] = (float)Bridge_BodyHandleFromShape( event->shapeIdB );
+		Bridge_WriteShapeIdentity( out + 2, event->shapeIdA );
+		Bridge_WriteShapeIdentity( out + 5, event->shapeIdB );
+		out[8] = Bridge_FindApproachSpeed( events, event->shapeIdA, event->shapeIdB );
+	}
+
+	return events.beginCount;
+}
+
+// End: [bodyA, bodyB, a.index1, a.world0, a.generation,
+//       b.index1, b.world0, b.generation]
+int b3bridge_drain_contact_end_events_with_shapes( int worldHandle, float* outEvents, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return 0;
+	}
+
+	b3ContactEvents events = b3World_GetContactEvents( worldId );
+	int writeCount = events.endCount < capacity ? events.endCount : capacity;
+	for ( int i = 0; i < writeCount; ++i )
+	{
+		b3ContactEndTouchEvent* event = events.endEvents + i;
+		float* out = outEvents + 8 * i;
+		out[0] = (float)Bridge_BodyHandleFromShape( event->shapeIdA );
+		out[1] = (float)Bridge_BodyHandleFromShape( event->shapeIdB );
+		Bridge_WriteShapeIdentity( out + 2, event->shapeIdA );
+		Bridge_WriteShapeIdentity( out + 5, event->shapeIdB );
+	}
+
+	return events.endCount;
+}
+
+// Hit: [bodyA, bodyB, a.index1, a.world0, a.generation,
+//       b.index1, b.world0, b.generation, pointX, pointY, pointZ,
+//       normalX, normalY, normalZ, approachSpeed]
+int b3bridge_drain_contact_hit_events_with_shapes( int worldHandle, float* outEvents, int capacity )
+{
+	b3WorldId worldId = Bridge_GetWorld( worldHandle );
+	if ( B3_IS_NULL( worldId ) )
+	{
+		return 0;
+	}
+
+	b3ContactEvents events = b3World_GetContactEvents( worldId );
+	int writeCount = events.hitCount < capacity ? events.hitCount : capacity;
+	for ( int i = 0; i < writeCount; ++i )
+	{
+		b3ContactHitEvent* hit = events.hitEvents + i;
+		float* out = outEvents + 15 * i;
+		out[0] = (float)Bridge_BodyHandleFromShape( hit->shapeIdA );
+		out[1] = (float)Bridge_BodyHandleFromShape( hit->shapeIdB );
+		Bridge_WriteShapeIdentity( out + 2, hit->shapeIdA );
+		Bridge_WriteShapeIdentity( out + 5, hit->shapeIdB );
+		out[8] = (float)hit->point.x;
+		out[9] = (float)hit->point.y;
+		out[10] = (float)hit->point.z;
+		out[11] = hit->normal.x;
+		out[12] = hit->normal.y;
+		out[13] = hit->normal.z;
+		out[14] = hit->approachSpeed;
 	}
 
 	return events.hitCount;

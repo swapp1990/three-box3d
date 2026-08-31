@@ -15,6 +15,7 @@
  */
 import type { Box3DModule, Ptr } from './raw-module.js';
 import {
+  type AABBOverlapResult,
   BODY_TYPE_TO_INT,
   DEFAULT_HULL_MAX_VERTICES,
   HULL_MAX_VERTICES_LIMIT,
@@ -24,8 +25,11 @@ import {
   type BodyOptions,
   type BodyType,
   type ContactBeginEvent,
+  type ContactBeginEventWithShapes,
   type ContactEndEvent,
+  type ContactEndEventWithShapes,
   type ContactHitEvent,
+  type ContactHitEventWithShapes,
   type DistanceJointOptions,
   type HullOptions,
   type JointHandle,
@@ -35,6 +39,7 @@ import {
   type RevoluteJointOptions,
   type SensorEvent,
   type ShapeHandle,
+  type ShapeIdentity,
   type ShapeMaterial,
   type SphericalJointMotor,
   type SphericalJointOptions,
@@ -130,8 +135,11 @@ interface PointJointMetadata {
 
 type DrainExportName =
   | 'b3bridge_drain_contact_begin_events'
+  | 'b3bridge_drain_contact_begin_events_with_shapes'
   | 'b3bridge_drain_contact_end_events'
+  | 'b3bridge_drain_contact_end_events_with_shapes'
   | 'b3bridge_drain_contact_hit_events'
+  | 'b3bridge_drain_contact_hit_events_with_shapes'
   | 'b3bridge_drain_sensor_events';
 
 export class WorldImpl {
@@ -143,12 +151,17 @@ export class WorldImpl {
   private readonly transformsScratch: Scratch;
   private readonly vectorScratch: Scratch;
   private readonly eventsScratch: Scratch;
+  private readonly overlapScratch: Scratch;
   private readonly pointJointMetadata = new Map<number, PointJointMetadata>();
+  private readonly contactShapeIdentity: boolean;
 
   // JS-side accumulate-until-drained queues. Flat for cheap drainInto.
-  // contact begin: [bodyA, bodyB, approachSpeed] triples
-  // contact end:   [bodyA, bodyB] pairs
-  // contact hit:   [bodyA, bodyB, px, py, pz, nx, ny, nz, approachSpeed] 9-tuples
+  // On shape-aware builds these queues contain the detailed native tuples. The
+  // legacy drains project their old layouts from these same queues, so callers
+  // cannot drain one semantic event twice through two APIs.
+  // contact begin (legacy 3 / detailed 9): [bodyA, bodyB, ...]
+  // contact end   (legacy 2 / detailed 8): [bodyA, bodyB, ...]
+  // contact hit   (legacy 9 / detailed 15): [bodyA, bodyB, ...]
   // sensor:        [sensor, other] pairs
   private contactQueue: number[] = [];
   private contactEndQueue: number[] = [];
@@ -162,6 +175,12 @@ export class WorldImpl {
     this.transformsScratch = new Scratch(mod);
     this.vectorScratch = new Scratch(mod);
     this.eventsScratch = new Scratch(mod);
+    this.overlapScratch = new Scratch(mod);
+    this.contactShapeIdentity =
+      typeof mod.exports.b3bridge_get_shape_identity === 'function' &&
+      typeof mod.exports.b3bridge_drain_contact_begin_events_with_shapes === 'function' &&
+      typeof mod.exports.b3bridge_drain_contact_end_events_with_shapes === 'function' &&
+      typeof mod.exports.b3bridge_drain_contact_hit_events_with_shapes === 'function';
   }
 
   private assertLive(): void {
@@ -215,37 +234,58 @@ export class WorldImpl {
 
   /** Read the step's contact/sensor events out of the bridge into the JS queues. */
   private pullEvents(): void {
-    this.readBridgeEvents(3, 'b3bridge_drain_contact_begin_events', (heap, base, count) => {
-      for (let i = 0; i < count; i++) {
-        const o = base + i * 3;
-        this.contactQueue.push(heap[o] | 0, heap[o + 1] | 0, heap[o + 2]);
-      }
-    });
-    if (typeof this.mod.exports.b3bridge_drain_contact_end_events === 'function') {
-      this.readBridgeEvents(2, 'b3bridge_drain_contact_end_events', (heap, base, count) => {
-        for (let i = 0; i < count; i++) {
-          const o = base + i * 2;
-          this.contactEndQueue.push(heap[o] | 0, heap[o + 1] | 0);
-        }
-      });
-    }
-    if (typeof this.mod.exports.b3bridge_drain_contact_hit_events === 'function') {
-      this.readBridgeEvents(9, 'b3bridge_drain_contact_hit_events', (heap, base, count) => {
+    if (this.contactShapeIdentity) {
+      this.readBridgeEvents(9, 'b3bridge_drain_contact_begin_events_with_shapes', (heap, base, count) => {
         for (let i = 0; i < count; i++) {
           const o = base + i * 9;
-          this.contactHitQueue.push(
-            heap[o] | 0,
-            heap[o + 1] | 0,
-            heap[o + 2],
-            heap[o + 3],
-            heap[o + 4],
-            heap[o + 5],
-            heap[o + 6],
-            heap[o + 7],
-            heap[o + 8],
-          );
+          for (let j = 0; j < 9; j++) this.contactQueue.push(heap[o + j]);
         }
       });
+      this.readBridgeEvents(8, 'b3bridge_drain_contact_end_events_with_shapes', (heap, base, count) => {
+        for (let i = 0; i < count; i++) {
+          const o = base + i * 8;
+          for (let j = 0; j < 8; j++) this.contactEndQueue.push(heap[o + j]);
+        }
+      });
+      this.readBridgeEvents(15, 'b3bridge_drain_contact_hit_events_with_shapes', (heap, base, count) => {
+        for (let i = 0; i < count; i++) {
+          const o = base + i * 15;
+          for (let j = 0; j < 15; j++) this.contactHitQueue.push(heap[o + j]);
+        }
+      });
+    } else {
+      this.readBridgeEvents(3, 'b3bridge_drain_contact_begin_events', (heap, base, count) => {
+        for (let i = 0; i < count; i++) {
+          const o = base + i * 3;
+          this.contactQueue.push(heap[o] | 0, heap[o + 1] | 0, heap[o + 2]);
+        }
+      });
+      if (typeof this.mod.exports.b3bridge_drain_contact_end_events === 'function') {
+        this.readBridgeEvents(2, 'b3bridge_drain_contact_end_events', (heap, base, count) => {
+          for (let i = 0; i < count; i++) {
+            const o = base + i * 2;
+            this.contactEndQueue.push(heap[o] | 0, heap[o + 1] | 0);
+          }
+        });
+      }
+      if (typeof this.mod.exports.b3bridge_drain_contact_hit_events === 'function') {
+        this.readBridgeEvents(9, 'b3bridge_drain_contact_hit_events', (heap, base, count) => {
+          for (let i = 0; i < count; i++) {
+            const o = base + i * 9;
+            this.contactHitQueue.push(
+              heap[o] | 0,
+              heap[o + 1] | 0,
+              heap[o + 2],
+              heap[o + 3],
+              heap[o + 4],
+              heap[o + 5],
+              heap[o + 6],
+              heap[o + 7],
+              heap[o + 8],
+            );
+          }
+        });
+      }
     }
     this.readBridgeEvents(2, 'b3bridge_drain_sensor_events', (heap, base, count) => {
       for (let i = 0; i < count; i++) {
@@ -1052,17 +1092,161 @@ export class WorldImpl {
     };
   }
 
+  private assertAABBOverlapAvailable():
+    (worldHandle: number, lowerX: number, lowerY: number, lowerZ: number,
+      upperX: number, upperY: number, upperZ: number, outResults: Ptr, capacity: number) => number {
+    const fn = this.mod.exports.b3bridge_overlap_aabb;
+    if (typeof fn !== 'function') {
+      throw new Error(
+        'box3d-web: overlapAABB requires Capabilities.aabbOverlap; rebuild the native WASM bridge.',
+      );
+    }
+    return fn;
+  }
+
+  private readAABBBounds(lowerBound: Vec3, upperBound: Vec3): [number, number, number, number, number, number] {
+    const [lowerX, lowerY, lowerZ] = lowerBound;
+    const [upperX, upperY, upperZ] = upperBound;
+    if (
+      ![lowerX, lowerY, lowerZ, upperX, upperY, upperZ].every(Number.isFinite) ||
+      lowerX > upperX || lowerY > upperY || lowerZ > upperZ
+    ) {
+      throw new RangeError('box3d-web: overlapAABB bounds must be finite and lowerBound <= upperBound.');
+    }
+    return [lowerX, lowerY, lowerZ, upperX, upperY, upperZ];
+  }
+
+  /** Find shapes whose broad-phase bounds potentially overlap a world-space
+   * AABB. Result order is unspecified; compounds report their outer shape. */
+  overlapAABB(lowerBound: Vec3, upperBound: Vec3): AABBOverlapResult[] {
+    this.assertLive();
+    const fn = this.assertAABBOverlapAvailable();
+    const [lowerX, lowerY, lowerZ, upperX, upperY, upperZ] =
+      this.readAABBBounds(lowerBound, upperBound);
+    let capacity = EVENT_DRAIN_CAPACITY;
+    for (;;) {
+      const ptr = this.overlapScratch.ensure(capacity * 4 * 4);
+      const total = fn(
+        this.handle,
+        lowerX, lowerY, lowerZ,
+        upperX, upperY, upperZ,
+        ptr,
+        capacity,
+      );
+      if (total > capacity) {
+        capacity = total;
+        continue;
+      }
+      const heap = this.mod.HEAPF32;
+      const base = ptr >> 2;
+      const out: AABBOverlapResult[] = [];
+      for (let i = 0; i < total; i++) {
+        const offset = base + i * 4;
+        out.push({
+          body: (heap[offset] | 0) as BodyHandle,
+          shape: {
+            index1: heap[offset + 1],
+            world0: heap[offset + 2],
+            generation: heap[offset + 3],
+          },
+        });
+      }
+      return out;
+    }
+  }
+
+  /** Writes [bodyHandle, shape.index1, shape.world0, shape.generation] into
+   * `out`. Returns the total match count, which may exceed its capacity. */
+  overlapAABBInto(lowerBound: Vec3, upperBound: Vec3, out: Float32Array): number {
+    this.assertLive();
+    if (!(out instanceof Float32Array)) {
+      throw new TypeError('box3d-web: overlapAABBInto `out` must be a Float32Array.');
+    }
+    const fn = this.assertAABBOverlapAvailable();
+    const [lowerX, lowerY, lowerZ, upperX, upperY, upperZ] =
+      this.readAABBBounds(lowerBound, upperBound);
+    const capacity = Math.floor(out.length / 4);
+    const heap = this.mod.HEAPF32;
+    const writesDirect = out.buffer === heap.buffer;
+    const ptr = writesDirect
+      ? out.byteOffset
+      : this.overlapScratch.ensure(capacity * 4 * 4);
+    const total = fn(
+      this.handle,
+      lowerX, lowerY, lowerZ,
+      upperX, upperY, upperZ,
+      ptr,
+      capacity,
+    );
+    if (!writesDirect && capacity > 0) {
+      const currentHeap = this.mod.HEAPF32;
+      const writtenFloatCount = Math.min(total, capacity) * 4;
+      out.set(currentHeap.subarray(ptr >> 2, (ptr >> 2) + writtenFloatCount));
+    }
+    return total;
+  }
+
   // --- events ---
+
+  private assertShapeIdentityAvailable(): void {
+    if (!this.contactShapeIdentity) {
+      throw new Error(
+        'box3d-web: shape-aware contact events require Capabilities.contactShapeIdentity; rebuild the native WASM bridge.',
+      );
+    }
+  }
+
+  private shapeIdentityFromQueue(q: number[], offset: number): ShapeIdentity {
+    return {
+      index1: q[offset],
+      world0: q[offset + 1],
+      generation: q[offset + 2],
+    };
+  }
+
+  getShapeIdentity(shape: ShapeHandle): ShapeIdentity | null {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const ptr = this.vectorScratch.ensure(3 * 4);
+    this.mod.exports.b3bridge_get_shape_identity!(shape, ptr);
+    const heap = this.mod.HEAPF32;
+    const i = ptr >> 2;
+    if (heap[i] === 0 && heap[i + 1] === 0 && heap[i + 2] === 0) return null;
+    return {
+      index1: heap[i],
+      world0: heap[i + 1],
+      generation: heap[i + 2],
+    };
+  }
 
   drainContactBeginEvents(): ContactBeginEvent[] {
     this.assertLive();
     const q = this.contactQueue;
     const out: ContactBeginEvent[] = [];
-    for (let i = 0; i < q.length; i += 3) {
+    const stride = this.contactShapeIdentity ? 9 : 3;
+    for (let i = 0; i < q.length; i += stride) {
       out.push({
         bodyA: q[i] as BodyHandle,
         bodyB: q[i + 1] as BodyHandle,
-        approachSpeed: q[i + 2],
+        approachSpeed: q[i + (this.contactShapeIdentity ? 8 : 2)],
+      });
+    }
+    this.contactQueue = [];
+    return out;
+  }
+
+  drainContactBeginEventsWithShapes(): ContactBeginEventWithShapes[] {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactQueue;
+    const out: ContactBeginEventWithShapes[] = [];
+    for (let i = 0; i < q.length; i += 9) {
+      out.push({
+        bodyA: q[i] as BodyHandle,
+        bodyB: q[i + 1] as BodyHandle,
+        shapeA: this.shapeIdentityFromQueue(q, i + 2),
+        shapeB: this.shapeIdentityFromQueue(q, i + 5),
+        approachSpeed: q[i + 8],
       });
     }
     this.contactQueue = [];
@@ -1073,8 +1257,26 @@ export class WorldImpl {
     this.assertLive();
     const q = this.contactEndQueue;
     const out: ContactEndEvent[] = [];
-    for (let i = 0; i < q.length; i += 2) {
+    const stride = this.contactShapeIdentity ? 8 : 2;
+    for (let i = 0; i < q.length; i += stride) {
       out.push({ bodyA: q[i] as BodyHandle, bodyB: q[i + 1] as BodyHandle });
+    }
+    this.contactEndQueue = [];
+    return out;
+  }
+
+  drainContactEndEventsWithShapes(): ContactEndEventWithShapes[] {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactEndQueue;
+    const out: ContactEndEventWithShapes[] = [];
+    for (let i = 0; i < q.length; i += 8) {
+      out.push({
+        bodyA: q[i] as BodyHandle,
+        bodyB: q[i + 1] as BodyHandle,
+        shapeA: this.shapeIdentityFromQueue(q, i + 2),
+        shapeB: this.shapeIdentityFromQueue(q, i + 5),
+      });
     }
     this.contactEndQueue = [];
     return out;
@@ -1084,13 +1286,35 @@ export class WorldImpl {
     this.assertLive();
     const q = this.contactHitQueue;
     const out: ContactHitEvent[] = [];
-    for (let i = 0; i < q.length; i += 9) {
+    const stride = this.contactShapeIdentity ? 15 : 9;
+    const pointOffset = this.contactShapeIdentity ? 8 : 2;
+    for (let i = 0; i < q.length; i += stride) {
       out.push({
         bodyA: q[i] as BodyHandle,
         bodyB: q[i + 1] as BodyHandle,
-        point: { x: q[i + 2], y: q[i + 3], z: q[i + 4] },
-        normal: { x: q[i + 5], y: q[i + 6], z: q[i + 7] },
-        approachSpeed: q[i + 8],
+        point: { x: q[i + pointOffset], y: q[i + pointOffset + 1], z: q[i + pointOffset + 2] },
+        normal: { x: q[i + pointOffset + 3], y: q[i + pointOffset + 4], z: q[i + pointOffset + 5] },
+        approachSpeed: q[i + pointOffset + 6],
+      });
+    }
+    this.contactHitQueue = [];
+    return out;
+  }
+
+  drainContactHitEventsWithShapes(): ContactHitEventWithShapes[] {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactHitQueue;
+    const out: ContactHitEventWithShapes[] = [];
+    for (let i = 0; i < q.length; i += 15) {
+      out.push({
+        bodyA: q[i] as BodyHandle,
+        bodyB: q[i + 1] as BodyHandle,
+        shapeA: this.shapeIdentityFromQueue(q, i + 2),
+        shapeB: this.shapeIdentityFromQueue(q, i + 5),
+        point: { x: q[i + 8], y: q[i + 9], z: q[i + 10] },
+        normal: { x: q[i + 11], y: q[i + 12], z: q[i + 13] },
+        approachSpeed: q[i + 14],
       });
     }
     this.contactHitQueue = [];
@@ -1114,13 +1338,34 @@ export class WorldImpl {
   drainContactBeginEventsInto(out: Float32Array): number {
     this.assertLive();
     const q = this.contactQueue;
-    const total = q.length / 3;
+    const sourceStride = this.contactShapeIdentity ? 9 : 3;
+    const total = q.length / sourceStride;
     const cap = Math.floor(out.length / 3);
     const write = Math.min(total, cap);
     for (let i = 0; i < write; i++) {
-      out[i * 3] = q[i * 3];
-      out[i * 3 + 1] = q[i * 3 + 1];
-      out[i * 3 + 2] = q[i * 3 + 2];
+      const src = i * sourceStride;
+      out[i * 3] = q[src];
+      out[i * 3 + 1] = q[src + 1];
+      out[i * 3 + 2] = q[src + (this.contactShapeIdentity ? 8 : 2)];
+    }
+    this.contactQueue = [];
+    return total;
+  }
+
+  /** Writes detailed begin tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation, approachSpeed]. Returns total accumulated event count and
+   *  drains the shared begin queue. */
+  drainContactBeginEventsWithShapesInto(out: Float32Array): number {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactQueue;
+    const total = q.length / 9;
+    const cap = Math.floor(out.length / 9);
+    const write = Math.min(total, cap);
+    for (let i = 0; i < write; i++) {
+      const src = i * 9;
+      for (let j = 0; j < 9; j++) out[src + j] = q[src + j];
     }
     this.contactQueue = [];
     return total;
@@ -1131,12 +1376,33 @@ export class WorldImpl {
   drainContactEndEventsInto(out: Float32Array): number {
     this.assertLive();
     const q = this.contactEndQueue;
-    const total = q.length / 2;
+    const sourceStride = this.contactShapeIdentity ? 8 : 2;
+    const total = q.length / sourceStride;
     const cap = Math.floor(out.length / 2);
     const write = Math.min(total, cap);
     for (let i = 0; i < write; i++) {
-      out[i * 2] = q[i * 2];
-      out[i * 2 + 1] = q[i * 2 + 1];
+      const src = i * sourceStride;
+      out[i * 2] = q[src];
+      out[i * 2 + 1] = q[src + 1];
+    }
+    this.contactEndQueue = [];
+    return total;
+  }
+
+  /** Writes detailed end tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation]. Returns total accumulated event count and drains the
+   *  shared end queue. */
+  drainContactEndEventsWithShapesInto(out: Float32Array): number {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactEndQueue;
+    const total = q.length / 8;
+    const cap = Math.floor(out.length / 8);
+    const write = Math.min(total, cap);
+    for (let i = 0; i < write; i++) {
+      const src = i * 8;
+      for (let j = 0; j < 8; j++) out[src + j] = q[src + j];
     }
     this.contactEndQueue = [];
     return total;
@@ -1149,21 +1415,36 @@ export class WorldImpl {
   drainContactHitEventsInto(out: Float32Array): number {
     this.assertLive();
     const q = this.contactHitQueue;
-    const total = q.length / 9;
+    const sourceStride = this.contactShapeIdentity ? 15 : 9;
+    const total = q.length / sourceStride;
     const cap = Math.floor(out.length / 9);
     const write = Math.min(total, cap);
     for (let i = 0; i < write; i++) {
-      const src = i * 9;
+      const src = i * sourceStride;
       const dst = i * 9;
       out[dst] = q[src];
       out[dst + 1] = q[src + 1];
-      out[dst + 2] = q[src + 2];
-      out[dst + 3] = q[src + 3];
-      out[dst + 4] = q[src + 4];
-      out[dst + 5] = q[src + 5];
-      out[dst + 6] = q[src + 6];
-      out[dst + 7] = q[src + 7];
-      out[dst + 8] = q[src + 8];
+      const sourceOffset = this.contactShapeIdentity ? 8 : 2;
+      for (let j = 0; j < 7; j++) out[dst + 2 + j] = q[src + sourceOffset + j];
+    }
+    this.contactHitQueue = [];
+    return total;
+  }
+
+  /** Writes detailed hit tuples:
+   *  [bodyA, bodyB, a.index1, a.world0, a.generation, b.index1, b.world0,
+   *   b.generation, px, py, pz, nx, ny, nz, approachSpeed]. Returns total
+   *  accumulated event count and drains the shared hit queue. */
+  drainContactHitEventsWithShapesInto(out: Float32Array): number {
+    this.assertLive();
+    this.assertShapeIdentityAvailable();
+    const q = this.contactHitQueue;
+    const total = q.length / 15;
+    const cap = Math.floor(out.length / 15);
+    const write = Math.min(total, cap);
+    for (let i = 0; i < write; i++) {
+      const src = i * 15;
+      for (let j = 0; j < 15; j++) out[src + j] = q[src + j];
     }
     this.contactHitQueue = [];
     return total;
@@ -1279,6 +1560,7 @@ export class WorldImpl {
     this.transformsScratch.dispose();
     this.vectorScratch.dispose();
     this.eventsScratch.dispose();
+    this.overlapScratch.dispose();
     this.contactQueue = [];
     this.contactEndQueue = [];
     this.contactHitQueue = [];

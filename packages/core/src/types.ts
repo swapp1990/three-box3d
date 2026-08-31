@@ -15,6 +15,18 @@ export type BodyHandle = number & { readonly [brand]: 'Body' };
 export type ShapeHandle = number & { readonly [brand]: 'Shape' };
 export type JointHandle = number & { readonly [brand]: 'Joint' };
 
+/**
+ * Generation-safe native shape identity. This is scoped to the Box3D module
+ * and world that created it; `generation` is a native uint16 and can wrap
+ * after sufficiently many slot lifetimes. Raw `ShapeHandle` integers remain
+ * reusable and must not be substituted for this identity.
+ */
+export interface ShapeIdentity {
+  readonly index1: number;
+  readonly world0: number;
+  readonly generation: number;
+}
+
 export type Vec3 = readonly [number, number, number];
 export type Quat = readonly [number, number, number, number]; // (x,y,z,w)
 
@@ -120,6 +132,13 @@ export interface RaycastHit {
   point: Readonly<{ x: number; y: number; z: number }>;
 }
 
+/** One shape returned by the broad-phase AABB query. Compound shapes are
+ * reported as their outer shape; no child index is exposed by this API. */
+export interface AABBOverlapResult {
+  body: BodyHandle;
+  shape: ShapeIdentity;
+}
+
 export interface ContactBeginEvent {
   bodyA: BodyHandle;
   bodyB: BodyHandle;
@@ -147,6 +166,25 @@ export interface ContactHitEvent {
   normal: Readonly<{ x: number; y: number; z: number }>;
   /** Approach speed at contact (m/s). */
   approachSpeed: number;
+}
+
+/** Contact-begin event with the exact native shape participants. */
+export interface ContactBeginEventWithShapes extends ContactBeginEvent {
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
+}
+
+/** Contact-end event with the exact native shape participants. Shape identities
+ * remain available even when the native shapes have already been destroyed. */
+export interface ContactEndEventWithShapes extends ContactEndEvent {
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
+}
+
+/** Contact-hit event with the exact native shape participants. */
+export interface ContactHitEventWithShapes extends ContactHitEvent {
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
 }
 
 /** Per-body contact normal-load telemetry after the most recent step. */
@@ -198,8 +236,12 @@ export interface Capabilities {
   contactEndEvents: boolean;
   /** `World.drainContactHitEvents` — native contact-hit drain (point + normal). */
   contactHitEvents: boolean;
+  /** Shape-aware contact begin/end/hit drains and `getShapeIdentity`. */
+  contactShapeIdentity: boolean;
   /** `World.getBodyContactLoad` — per-body contact normal-load telemetry. */
   contactLoadTelemetry: boolean;
+  /** Default-filter `World.overlapAABB` / `overlapAABBInto`. */
+  aabbOverlap: boolean;
   /** `World.addHull` — convex hull from a body-local point cloud. */
   convexHull: boolean;
   /** Open-ended probe for features added after these typings were published. */

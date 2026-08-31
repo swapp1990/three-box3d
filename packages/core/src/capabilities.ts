@@ -54,11 +54,17 @@ export function computeCapabilities(mod: Box3DModule, world: WorldImpl): Capabil
   const bodyCount = probe(() => exp.b3bridge_get_body_count(handle));
   const contactEndEvents = typeof exp.b3bridge_drain_contact_end_events === 'function';
   const contactHitEvents = typeof exp.b3bridge_drain_contact_hit_events === 'function';
+  const contactShapeIdentity =
+    typeof exp.b3bridge_get_shape_identity === 'function' &&
+    typeof exp.b3bridge_drain_contact_begin_events_with_shapes === 'function' &&
+    typeof exp.b3bridge_drain_contact_end_events_with_shapes === 'function' &&
+    typeof exp.b3bridge_drain_contact_hit_events_with_shapes === 'function';
   const jointMotorTelemetry =
     typeof exp.b3bridge_get_revolute_motor_torque === 'function' &&
     typeof exp.b3bridge_get_spherical_motor_torque === 'function';
   const contactLoadTelemetry = typeof exp.b3bridge_get_body_contact_load === 'function';
   const convexHull = typeof exp.b3bridge_add_hull_shape === 'function';
+  const aabbOverlap = typeof exp.b3bridge_overlap_aabb === 'function';
 
   const setGravity = probe(() => {
     const g = exp.b3bridge_setGravity(handle, 0, -9.81, 0);
@@ -212,7 +218,9 @@ export function computeCapabilities(mod: Box3DModule, world: WorldImpl): Capabil
     jointMotorTelemetry,
     contactEndEvents,
     contactHitEvents,
+    contactShapeIdentity,
     contactLoadTelemetry,
+    aabbOverlap,
     convexHull,
   });
   cache.set(world, caps);

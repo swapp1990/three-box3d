@@ -16,14 +16,18 @@ import type { Box3DModule } from './raw-module.js';
 import {
   DEFAULT_HULL_MAX_VERTICES,
   HULL_MAX_VERTICES_LIMIT,
+  type AABBOverlapResult,
   type BodyContactLoad,
   type BodyHandle,
   type BodyOptions,
   type BodyType,
   type Capabilities,
   type ContactBeginEvent,
+  type ContactBeginEventWithShapes,
   type ContactEndEvent,
+  type ContactEndEventWithShapes,
   type ContactHitEvent,
+  type ContactHitEventWithShapes,
   type DistanceJointOptions,
   type HullOptions,
   type JointHandle,
@@ -33,6 +37,7 @@ import {
   type RevoluteJointOptions,
   type SensorEvent,
   type ShapeHandle,
+  type ShapeIdentity,
   type ShapeMaterial,
   type SphericalJointMotor,
   type SphericalJointOptions,
@@ -101,6 +106,10 @@ export interface World {
   setShapeFriction(shape: ShapeHandle, friction: number): void;
   /** Bridge round 2 — see `Capabilities.shapeMaterial`. */
   setShapeRestitution(shape: ShapeHandle, restitution: number): void;
+  /** Generation-safe native identity for the shape currently occupying an
+   *  active handle slot. Raw shape handles remain reusable. Throws when the
+   *  shape-identity bridge capability is unavailable. */
+  getShapeIdentity(shape: ShapeHandle): ShapeIdentity | null;
 
   setLinearVelocity(body: BodyHandle, v: Vec3): void;
   getLinearVelocity(body: BodyHandle): Vec3Out;
@@ -155,6 +164,13 @@ export interface World {
   getBodyContactLoad<T extends BodyContactLoad>(body: BodyHandle, out: T): T;
 
   castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null;
+  /** Find all shapes whose broad-phase bounds potentially overlap world-space
+   * AABB bounds. Native callback order is unspecified; compounds report their
+   * outer shape only. */
+  overlapAABB(lowerBound: Vec3, upperBound: Vec3): AABBOverlapResult[];
+  /** Writes [bodyHandle, shape.index1, shape.world0, shape.generation] into
+   * `out`; returns total matches, which may exceed the buffer capacity. */
+  overlapAABBInto(lowerBound: Vec3, upperBound: Vec3, out: Float32Array): number;
 
   drainContactBeginEvents(): ContactBeginEvent[];
   drainContactEndEvents(): ContactEndEvent[];
@@ -163,6 +179,13 @@ export interface World {
   drainContactBeginEventsInto(out: Float32Array): number;
   drainContactEndEventsInto(out: Float32Array): number;
   drainContactHitEventsInto(out: Float32Array): number;
+  /** Shape-aware drains consume the same queues as their legacy counterparts. */
+  drainContactBeginEventsWithShapes(): ContactBeginEventWithShapes[];
+  drainContactEndEventsWithShapes(): ContactEndEventWithShapes[];
+  drainContactHitEventsWithShapes(): ContactHitEventWithShapes[];
+  drainContactBeginEventsWithShapesInto(out: Float32Array): number;
+  drainContactEndEventsWithShapesInto(out: Float32Array): number;
+  drainContactHitEventsWithShapesInto(out: Float32Array): number;
   drainSensorEventsInto(out: Int32Array): number;
 
   wakeBody(body: BodyHandle): void;
@@ -281,14 +304,18 @@ export function probeCapabilities(world: World): Capabilities {
 }
 
 export type {
+  AABBOverlapResult,
   BodyContactLoad,
   BodyHandle,
   BodyOptions,
   BodyType,
   Capabilities,
   ContactBeginEvent,
+  ContactBeginEventWithShapes,
   ContactEndEvent,
+  ContactEndEventWithShapes,
   ContactHitEvent,
+  ContactHitEventWithShapes,
   DistanceJointOptions,
   HullOptions,
   JointHandle,
@@ -298,6 +325,7 @@ export type {
   RevoluteJointOptions,
   SensorEvent,
   ShapeHandle,
+  ShapeIdentity,
   ShapeMaterial,
   SphericalJointMotor,
   SphericalJointOptions,
@@ -310,7 +338,7 @@ export type {
 export { DEFAULT_HULL_MAX_VERTICES, HULL_MAX_VERTICES_LIMIT };
 
 // Helper modules (tree-shakeable named exports; none imports three).
-export { FixedStepper, type FixedStepperOptions } from './helpers/fixed-step.js';
+export { FixedStepper, type FixedStepperOptions, type FixedStepperTelemetry } from './helpers/fixed-step.js';
 export { TransformBuffer } from './helpers/transform-buffer.js';
 export {
   SleepManager,

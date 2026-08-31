@@ -337,6 +337,18 @@ export interface RaycastHit {
 /** Closest hit along the ray `origin → origin + dir` (dir carries max distance).
  *  Returns `null` on no hit — this is the one query that legitimately misses. */
 castRayClosest(origin: Vec3, dir: Vec3): RaycastHit | null;
+
+export interface AABBOverlapResult {
+  body: BodyHandle;
+  /** Generation-safe outer shape identity; compound child indices are not exposed. */
+  shape: ShapeIdentity;
+}
+/** Find shapes whose broad-phase bounds potentially overlap the world-space
+ * AABB. Native callback order is unspecified. */
+overlapAABB(lowerBound: Vec3, upperBound: Vec3): AABBOverlapResult[];
+/** Writes [bodyHandle, shape.index1, shape.world0, shape.generation] tuples and
+ * returns the total match count, which may exceed `out.length / 4`. */
+overlapAABBInto(lowerBound: Vec3, upperBound: Vec3, out: Float32Array): number;
 ```
 
 ### 2.8 Events
@@ -346,6 +358,33 @@ export interface ContactBeginEvent {
   bodyA: BodyHandle;
   bodyB: BodyHandle;
   /** Approach speed at contact (m/s) — use for impact-scaled VFX/sound. */
+  approachSpeed: number;
+}
+/** Native generation-safe shape identity. Scoped to the Box3D module/world;
+ * `generation` is uint16 and may wrap after sufficiently many slot lifetimes. */
+export interface ShapeIdentity {
+  readonly index1: number;
+  readonly world0: number;
+  readonly generation: number;
+}
+export interface ContactBeginEventWithShapes extends ContactBeginEvent {
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
+}
+export interface ContactEndEventWithShapes {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  /** Identity remains available when the ended shape was destroyed already. */
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
+}
+export interface ContactHitEventWithShapes {
+  bodyA: BodyHandle;
+  bodyB: BodyHandle;
+  shapeA: ShapeIdentity;
+  shapeB: ShapeIdentity;
+  point: Readonly<{ x: number; y: number; z: number }>;
+  normal: Readonly<{ x: number; y: number; z: number }>;
   approachSpeed: number;
 }
 export interface SensorEvent {
@@ -367,6 +406,27 @@ drainSensorEvents(): SensorEvent[];
  */
 drainContactBeginEventsInto(out: Float32Array): number; // tuple = [bodyA, bodyB, approachSpeed]
 drainSensorEventsInto(out: Int32Array): number;         // tuple = [sensor, other]
+
+/** Shape-aware drains use one shared queue per event kind with the legacy
+ * methods above. Calling either projection consumes the event. They require
+ * `Capabilities.contactShapeIdentity`; old WASM builds throw rather than
+ * returning fabricated identities. */
+drainContactBeginEventsWithShapes(): ContactBeginEventWithShapes[];
+drainContactEndEventsWithShapes(): ContactEndEventWithShapes[];
+drainContactHitEventsWithShapes(): ContactHitEventWithShapes[];
+drainContactBeginEventsWithShapesInto(out: Float32Array): number;
+drainContactEndEventsWithShapesInto(out: Float32Array): number;
+drainContactHitEventsWithShapesInto(out: Float32Array): number;
+getShapeIdentity(shape: ShapeHandle): ShapeIdentity | null;
+
+// ShapeHandle is lifecycle-local and its integer slot may be reused. Retain
+// ShapeIdentity for event routing; an old raw handle can name a newer shape
+// after reuse. ShapeIdentity itself is scoped to this live module/world.
+
+// Detailed `...WithShapesInto` tuple layouts:
+// begin [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation,approachSpeed]
+// end   [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation]
+// hit   [bodyA,bodyB,a.index1,a.world0,a.generation,b.index1,b.world0,b.generation,px,py,pz,nx,ny,nz,approachSpeed]
 ```
 
 > **Draining contract (frozen):** events **accumulate until drained** — nothing is
@@ -403,6 +463,10 @@ export interface Capabilities {
   angularVelocity: boolean;
   forces: boolean;
   setBodyTransform: boolean;
+  /** Default-filter `overlapAABB` / `overlapAABBInto`. */
+  aabbOverlap: boolean;
+  /** Shape-aware contact drains and `getShapeIdentity`. */
+  contactShapeIdentity: boolean;
   bodyInertia: boolean;  // local diagonal rotational-inertia telemetry
   setBodyInertia: boolean; // local diagonal override; preserves mass/center
   /** Open-ended probe for features added after these typings were published. */

@@ -23,6 +23,29 @@ describe('FixedStepper', () => {
     expect(s.advance(0.005, () => {})).toBe(0);
   });
 
+  it('stepOnce executes exactly one step and does not consume the accumulator', () => {
+    const s = new FixedStepper({ fixedDt: 0.1 });
+    const seen: number[] = [];
+
+    expect(s.advance(0.05, (dt) => seen.push(dt))).toBe(0);
+    const before = s.telemetry();
+    s.stepOnce((dt) => seen.push(dt));
+    const after = s.telemetry();
+
+    expect(seen).toEqual([0.1]);
+    expect(s.simTime).toBeCloseTo(0.1, 10);
+    expect(after.accumulator).toBeCloseTo(before.accumulator, 10);
+    expect(after.totalExecutedSteps).toBe(1);
+    expect(after.droppedBacklogTime).toBe(0);
+    expect(after.droppedBacklogSteps).toBe(0);
+
+    // The partial frame remainder is still available to the normal advance
+    // path; stepOnce did not consume it.
+    expect(s.advance(0.05, (dt) => seen.push(dt))).toBe(1);
+    expect(seen).toEqual([0.1, 0.1]);
+    expect(s.simTime).toBeCloseTo(0.2, 10);
+  });
+
   it('clamps a huge delta and caps steps per frame (death-spiral guard)', () => {
     const s = new FixedStepper({ maxStepsPerFrame: 3, maxDeltaClamp: 0.1, fixedDt: 1 / 60 });
     let count = 0;
@@ -30,6 +53,13 @@ describe('FixedStepper', () => {
     const n = s.advance(10, () => count++);
     expect(n).toBe(3);
     expect(count).toBe(3);
+
+    const telemetry = s.telemetry();
+    expect(telemetry.totalExecutedSteps).toBe(3);
+    expect(telemetry.droppedBacklogSteps).toBe(3);
+    expect(telemetry.droppedBacklogTime).toBeCloseTo(3 / 60, 8);
+    expect(telemetry.maxStepsPerFrame).toBe(3);
+    expect(Object.isFrozen(telemetry)).toBe(true);
   });
 
   it('reset zeroes simTime and accumulator', () => {
@@ -37,7 +67,14 @@ describe('FixedStepper', () => {
     s.advance(0.5, () => {});
     s.reset();
     expect(s.simTime).toBe(0);
+    expect(s.telemetry()).toMatchObject({
+      accumulator: 0,
+      totalExecutedSteps: 0,
+      droppedBacklogTime: 0,
+      droppedBacklogSteps: 0,
+    });
     expect(s.advance(0.005, () => {})).toBe(0);
+    expect(s.telemetry().accumulator).toBeCloseTo(0.005, 10);
   });
 });
 
