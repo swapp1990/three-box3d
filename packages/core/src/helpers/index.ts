@@ -30,3 +30,20 @@ export type {
   SceneContactBatch,
   SceneParticipant,
 } from './scene-participant.js';
+export {
+  createEntityRegistry,
+  EntityRegistry,
+  type EntityRegistryOptions,
+  type EntityRegistrySnapshot,
+  type EntityRegistryStats,
+  type RegisteredBody,
+  type RegisteredShape,
+} from './entity-registry.js';
+export {
+  createSceneRuntime,
+  SceneRuntime,
+  type SceneCommandInput,
+  type SceneEventEnvelope,
+  type SceneRuntimeOptions,
+  type SceneRuntimeTelemetry,
+} from './scene-runtime.js';
